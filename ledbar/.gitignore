@@ -1,0 +1,14 @@
+# 커널 모듈 빌드 결과물
+*.ko
+*.o
+*.mod
+*.mod.c
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+
+# 앱 / DT 빌드 결과물
+ledbar_test
+fan_led_sim
+*.dtbo
