@@ -1,0 +1,6 @@
+	ec11 {
+		compatible = "smartfan,ec11";
+		a-gpios = <0xf3 125 0>;		/* header pin 29, PQ.05, EC11 S1 */
+		b-gpios = <0xf3 126 0>;		/* header pin 31, PQ.06, EC11 S2 */
+		key-gpios = <0xf3 66 1>;	/* header pin 35, PI.02, EC11 KEY (active low) */
+	};
