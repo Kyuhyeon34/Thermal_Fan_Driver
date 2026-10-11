@@ -1,0 +1,35 @@
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    overlay-name = "Custom BMP180 IIO Sensor";
+    jetson-header-name = "Jetson 40pin Header";
+
+    /*
+     * Jetson Orin Nano Developer Kit example.
+     * Confirm the board compatible string.
+     */
+    compatible = "nvidia,p3768-0000+p3767-0005-super";
+
+    fragment@0 {
+        /*
+         * Replace with the actual I2C-7 DT node path.
+         */
+        target-path = "/bus@0/i2c@c250000";
+
+        __overlay__ {
+            status = "okay";
+
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            bmp180@77 {
+                compatible = "custom,bmp180";
+                reg = <0x77>;
+                status = "okay";
+            };
+        };
+    };
+};
+

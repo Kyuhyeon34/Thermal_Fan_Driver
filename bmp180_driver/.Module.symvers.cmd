@@ -1,0 +1,1 @@
+cmd_/home/aidl/work/Project/linux_driver_project/bmp180_driver/Module.symvers := sed 's/\.ko$$/\.o/' /home/aidl/work/Project/linux_driver_project/bmp180_driver/modules.order | scripts/mod/modpost -m   -o /home/aidl/work/Project/linux_driver_project/bmp180_driver/Module.symvers -e -i Module.symvers   -T -
