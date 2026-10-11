@@ -7,11 +7,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <motor_ioctl.h>
 
