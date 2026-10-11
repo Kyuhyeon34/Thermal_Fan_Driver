@@ -18,6 +18,7 @@
 #define GPIOCHIP	"/dev/gpiochip0"
 #define LED_LINE	112		/* header pin 11, PR.04 */
 #define DUTY_STEP	5		/* [%] per knob step, 20 steps for 0..100 */
+#define ROTATE_REVERSED	1		/* 1: swap the knob direction reported by the driver (S1/S2 are wired crossed) */
 #define EV_MAX		16
 
 /* team globals that fan_state.c does not define */
@@ -123,12 +124,13 @@ static const struct fan_ops ops = {
 
 static void usage(const char *prog)
 {
-	printf("usage: %s [-s duty_step] [-l led_line] [-L] [-n] [-B]\n", prog);
+	printf("usage: %s [-s duty_step] [-l led_line] [-L] [-n] [-B] [-r]\n", prog);
 	printf("  -s  duty step per knob step in %% (default %d)\n", DUTY_STEP);
 	printf("  -l  mode LED gpiochip0 line (default %d = header pin 11)\n", LED_LINE);
 	printf("  -L  LED is active low\n");
 	printf("  -n  do not use the LED\n");
 	printf("  -B  do not use the LED bar (/dev/ledbar)\n");
+	printf("  -r  swap the knob direction (default is %s)\n", ROTATE_REVERSED ? "swapped" : "as reported by the driver");
 }
 
 int main(int argc, char *argv[])
@@ -136,15 +138,17 @@ int main(int argc, char *argv[])
 	struct ec11_event evs[EV_MAX];
 	struct sigaction sa;
 	int step = DUTY_STEP, line = LED_LINE, use_led = 1, use_bar = 1;
-	int fd, opt, rlen, i, n;
+	int reversed = ROTATE_REVERSED;
+	int fd, opt, rlen, i, n, delta;
 
-	while ((opt = getopt(argc, argv, "s:l:LnBh")) != -1) {
+	while ((opt = getopt(argc, argv, "s:l:LnBrh")) != -1) {
 		switch (opt) {
 		case 's': step = atoi(optarg); break;
 		case 'l': line = atoi(optarg); break;
 		case 'L': led_active_low = 1; break;
 		case 'n': use_led = 0; break;
 		case 'B': use_bar = 0; break;
+		case 'r': reversed = !reversed; break;
 		default:
 			usage(argv[0]);
 			return EXIT_FAILURE;
@@ -213,11 +217,12 @@ int main(int argc, char *argv[])
 		for (i = 0; i < n; i++) {
 			switch (evs[i].type) {
 			case EC11_EV_ROTATE:
-				if (evs[i].delta > 0)
+				delta = reversed ? -evs[i].delta : evs[i].delta;
+				if (delta > 0)
 					CW_CNT++;
 				else
 					CCW_CNT++;
-				fan_on_rotate(evs[i].delta);
+				fan_on_rotate(delta);
 				break;
 			case EC11_EV_CLICK:
 				fan_on_click();
