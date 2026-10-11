@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/dc_motor/modules.order := {   echo /home/aidl/work/Project/linux_driver_project/dc_motor/motor.ko; :; } | awk '!x[$$0]++' - > /home/aidl/work/Project/linux_driver_project/dc_motor/modules.order

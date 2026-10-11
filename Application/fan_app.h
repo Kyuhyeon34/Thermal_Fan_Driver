@@ -13,8 +13,7 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/ioctl.h>
-
-#include "motor_ioctl.h"
+#include <motor_ioctl.h>
 
 #define MOTOR_DEV_PATH "/dev/mydev"
 
@@ -24,8 +23,8 @@
 
 #define SAMPLE_INTERVAL_SEC 1
 
-#define FAN_ON_TEMP_MC   26000
-#define FAN_OFF_TEMP_MC  24000
+#define FAN_ON_TEMP_MC   22000
+#define FAN_OFF_TEMP_MC  20000
 #define MIN_DUTY_PERCENT 40
 #define MAX_DUTY_PERCENT 100
 

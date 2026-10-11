@@ -137,6 +137,8 @@ static long device_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
         mutex_lock(&motor_lock);
 
+        printk("duty: %u\n", duty_percent);
+
         if (duty_percent > 100)
             return -EINVAL;
 
