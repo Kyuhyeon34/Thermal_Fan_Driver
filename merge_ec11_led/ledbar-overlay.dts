@@ -1,0 +1,120 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * ledbar-overlay.dts - 선풍기 프로젝트 LED 바 DT 오버레이 (Jetson Orin Nano, JetPack 6)
+ *
+ * 빌드:  dtc -@ -I dts -O dtb -o ledbar.dtbo ledbar-overlay.dts
+ * 적용:  sudo cp ledbar.dtbo /boot/
+ *        /boot/extlinux/extlinux.conf 의 사용 중인 LABEL 아래에
+ *            OVERLAYS /boot/ledbar.dtbo
+ *        한 줄 추가 후 재부팅
+ *
+ * GPIO 번호 = TEGRA234_MAIN_GPIO(포트, 번호) = 포트인덱스 * 8 + 번호
+ *   (포트인덱스: H=7, I=8, Y=18  — dt-bindings/gpio/tegra234-gpio.h)
+ * 숫자를 바꾸기 전에 `sudo gpioinfo gpiochip0` 의 라인 이름과 반드시 대조할 것.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	overlay-name = "Fan project LED bar";
+	jetson-header-name = "Jetson 40pin Header";
+	compatible = "nvidia,p3768-0000+p3767-0000",
+		     "nvidia,p3768-0000+p3767-0001",
+		     "nvidia,p3768-0000+p3767-0003",
+		     "nvidia,p3768-0000+p3767-0004",
+		     "nvidia,p3768-0000+p3767-0005";
+
+	/*
+	 * JetPack 6 에서는 헤더 핀 패드가 tristate(출력 꺼짐) 상태로 부팅될 수 있다.
+	 * (R36.5 실측: 8핀 모두 tristate=1, SPI3 핀은 open-drain=1 로 읽힘)
+	 * 드라이버가 probe 될 때 커널이 아래 "default" pinctrl 상태를 자동 적용해
+	 * tristate 해제 + 입력버퍼 끄기 + 풀업/풀다운 없음 + push-pull 로 바꾼다.
+	 *   tristate/enable-input/open-drain: 0 = DISABLE, 1 = ENABLE
+	 *   pull: 0 = NONE, 1 = DOWN, 2 = UP
+	 * 그룹 이름은 /sys/kernel/debug/pinctrl/2430000.pinmux/pinmux-pins 의 이름(소문자)
+	 */
+	fragment@0 {
+		target = <&pinmux>;
+		__overlay__ {
+			ledbar_pins: ledbar-pins {
+				ph7 {
+					nvidia,pins = "soc_gpio41_ph7";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				pi0 {
+					nvidia,pins = "soc_gpio42_pi0";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				pi1 {
+					nvidia,pins = "soc_gpio43_pi1";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				py0 {
+					nvidia,pins = "spi3_sck_py0";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				py1 {
+					nvidia,pins = "spi3_miso_py1";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				py2 {
+					nvidia,pins = "spi3_mosi_py2";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				py3 {
+					nvidia,pins = "spi3_cs0_py3";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+				py4 {
+					nvidia,pins = "spi3_cs1_py4";
+					nvidia,tristate = <0>;
+					nvidia,enable-input = <0>;
+					nvidia,pull = <0>;
+					nvidia,open-drain = <0>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/";
+		__overlay__ {
+			ledbar {
+				compatible = "team,ledbar";
+				status = "okay";
+				pinctrl-names = "default";
+				pinctrl-0 = <&ledbar_pins>;
+				/* LED1(맨 아래) → LED8(맨 위), 0 = GPIO_ACTIVE_HIGH */
+				led-gpios = <&gpio  63 0>,	/* 핀 12  PH.07 (I2S0_SCLK) */
+					    <&gpio 144 0>,	/* 핀 13  PY.00 (SPI1_SCK)  */
+					    <&gpio 148 0>,	/* 핀 16  PY.04 (SPI1_CS1)  */
+					    <&gpio 147 0>,	/* 핀 18  PY.03 (SPI1_CS0)  */
+					    <&gpio 145 0>,	/* 핀 22  PY.01 (SPI1_MISO) */
+					    <&gpio 146 0>,	/* 핀 37  PY.02 (SPI1_MOSI) */
+					    <&gpio  65 0>,	/* 핀 38  PI.01 (I2S0_DIN)  */
+					    <&gpio  64 0>;	/* 핀 40  PI.00 (I2S0_DOUT) */
+			};
+		};
+	};
+};
