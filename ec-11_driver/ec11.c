@@ -43,6 +43,14 @@ static int steps_per_detent = 4;
 module_param(steps_per_detent, int, 0444);
 MODULE_PARM_DESC(steps_per_detent, "quadrature transitions per detent (1, 2 or 4)");
 
+#if CONF_DT
+#else
+/* S1/S2 go through an inverting NPN stage, the GPIO level is the inverse of the module level */
+static bool s_inverted = true;
+module_param(s_inverted, bool, 0444);
+MODULE_PARM_DESC(s_inverted, "S1/S2 are inverted by an NPN stage (1: yes, 0: wired directly)");
+#endif
+
 static bool reverse;
 module_param(reverse, bool, 0644);
 MODULE_PARM_DESC(reverse, "swap CW/CCW direction");
@@ -531,6 +539,9 @@ static int __init platform_device_init(void)
 		printk("platform_driver_register failed (ret=%d)\n", ret);
 	}
 #else
+	/* with the NPN stage, active low turns the GPIO level back into the module level */
+	ec11_gpio_table.table[0].flags = s_inverted ? GPIO_ACTIVE_LOW : GPIO_ACTIVE_HIGH;
+	ec11_gpio_table.table[1].flags = s_inverted ? GPIO_ACTIVE_LOW : GPIO_ACTIVE_HIGH;
 	gpiod_add_lookup_table(&ec11_gpio_table);
 
 	ret = platform_driver_register(&my_platform_driver);
