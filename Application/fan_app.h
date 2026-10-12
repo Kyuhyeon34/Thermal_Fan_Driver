@@ -19,6 +19,8 @@
 #include <motor_ioctl.h>
 #include <ec11_ioctl.h>
 #include <fan_globals.h>
+#include <ledbar_ctrl.h>
+
 
 /* Device paths */
 #define MOTOR_DEV_PATH "/dev/mydev"

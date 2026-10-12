@@ -8,6 +8,7 @@ int CCW_CNT = 0;
 int PWM_DUTY = 0;
 int FAN_LEVEL = 0;
 enum fan_mode fan_mode = WAIT;
+static int ledbar_active = 0;
 
 static volatile sig_atomic_t running = 1;
 
@@ -19,11 +20,16 @@ static void signal_handler(int sig)
 
 static const char *mode_name(enum fan_mode mode)
 {
-    switch (mode) {
-    case WAIT:   return "WAIT";
-    case AUTO:   return "AUTO";
-    case MANUAL: return "MANUAL";
-    default:     return "UNKNOWN";
+    switch (mode)
+    {
+    case WAIT:
+        return "WAIT";
+    case AUTO:
+        return "AUTO";
+    case MANUAL:
+        return "MANUAL";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -60,7 +66,8 @@ static int fan_read_temperature(int *temp_mc)
     if (!fp)
         return -errno;
 
-    if (fscanf(fp, "%ld", &value) != 1) {
+    if (fscanf(fp, "%ld", &value) != 1)
+    {
         int err = ferror(fp) ? errno : EIO;
         fclose(fp);
         return -(err ? err : EIO);
@@ -114,8 +121,8 @@ static int calculate_auto_duty(fan_state_t *fan)
 
     return MIN_DUTY_PERCENT +
            (temp - FAN_ON_TEMP_MC) *
-           (MAX_DUTY_PERCENT - MIN_DUTY_PERCENT) /
-           (AUTO_FULL_TEMP_MC - FAN_ON_TEMP_MC);
+               (MAX_DUTY_PERCENT - MIN_DUTY_PERCENT) /
+               (AUTO_FULL_TEMP_MC - FAN_ON_TEMP_MC);
 }
 
 /* Apply the duty selected by the current mode */
@@ -124,16 +131,19 @@ static int fan_apply(int motor_fd, fan_state_t *fan)
     int duty = 0;
     int ret;
 
-    if (fan_mode == MANUAL) {
+    if (fan_mode == MANUAL)
+    {
         duty = fan->manual_duty;
     }
-    else if (fan_mode == AUTO && fan->temp_valid) {
+    else if (fan_mode == AUTO && fan->temp_valid)
+    {
         duty = calculate_auto_duty(fan);
     }
 
     duty = clamp_duty(duty);
 
-    if (duty != fan->applied_duty) {
+    if (duty != fan->applied_duty)
+    {
         ret = motor_set_duty(motor_fd, duty);
         if (ret < 0)
             return ret;
@@ -143,6 +153,12 @@ static int fan_apply(int motor_fd, fan_state_t *fan)
 
     PWM_DUTY = duty;
     FAN_LEVEL = (duty * 8 + 99) / 100;
+
+    /* Update LED Bar according to mode */
+    if (ledbar_active)
+    {
+        ledbar_ctrl_update();
+    }
 
     return 0;
 }
@@ -154,7 +170,8 @@ static int fan_update_auto(int motor_fd, fan_state_t *fan)
 
     ret = fan_read_temperature(&fan->current_temp_mc);
 
-    if (ret < 0) {
+    if (ret < 0)
+    {
         fprintf(stderr,
                 "BMP180 read failed: %s\n",
                 strerror(-ret));
@@ -162,7 +179,8 @@ static int fan_update_auto(int motor_fd, fan_state_t *fan)
         fan->temp_valid = false;
         fan->auto_on = false;
     }
-    else {
+    else
+    {
         fan->temp_valid = true;
         TEMP = fan->current_temp_mc / 1000.0f;
     }
@@ -171,7 +189,8 @@ static int fan_update_auto(int motor_fd, fan_state_t *fan)
     if (ret < 0)
         return ret;
 
-    if (fan->temp_valid) {
+    if (fan->temp_valid)
+    {
         printf("[AUTO] Temp=%.1f C, Duty=%d%%\n",
                TEMP, PWM_DUTY);
     }
@@ -200,7 +219,8 @@ static int fan_change_mode(
            mode_name(old_mode),
            mode_name(fan_mode));
 
-    if (fan_mode == AUTO) {
+    if (fan_mode == AUTO)
+    {
         /* Require a fresh measurement */
         fan->temp_valid = false;
         *next_sample = 0;
@@ -221,7 +241,8 @@ static int handle_ec11_event(
 {
     int delta;
 
-    switch (ev->type) {
+    switch (ev->type)
+    {
 
     case EC11_EV_ROTATE:
         delta = reversed ? -ev->delta : ev->delta;
@@ -235,8 +256,7 @@ static int handle_ec11_event(
             return 0;
 
         fan->manual_duty = clamp_duty(
-            fan->manual_duty + delta * step
-        );
+            fan->manual_duty + delta * step);
 
         printf("[MANUAL] Duty=%d%%\n",
                fan->manual_duty);
@@ -274,8 +294,7 @@ static int handle_ec11_event(
 int main(int argc, char **argv)
 {
     fan_state_t fan = {
-        .saved_mode = MANUAL
-    };
+        .saved_mode = MANUAL};
 
     struct sigaction sa = {0};
     struct ec11_event events[EC11_EVENT_MAX];
@@ -287,8 +306,10 @@ int main(int argc, char **argv)
     int step = MANUAL_DUTY_STEP;
     int64_t next_sample = 0;
 
-    while ((opt = getopt(argc, argv, "s:rh")) != -1) {
-        switch (opt) {
+    while ((opt = getopt(argc, argv, "s:rh")) != -1)
+    {
+        switch (opt)
+        {
         case 's':
             step = atoi(optarg);
             break;
@@ -303,7 +324,8 @@ int main(int argc, char **argv)
         }
     }
 
-    if (step < 1 || step > 100) {
+    if (step < 1 || step > 100)
+    {
         fprintf(stderr, "Invalid duty step\n");
         return EXIT_FAILURE;
     }
@@ -315,23 +337,37 @@ int main(int argc, char **argv)
     sigaction(SIGTERM, &sa, NULL);
 
     motor_fd = open(MOTOR_DEV_PATH, O_RDWR);
-    if (motor_fd < 0) {
+    if (motor_fd < 0)
+    {
         perror("Motor open");
         return EXIT_FAILURE;
     }
 
     ret = motor_set_duty(motor_fd, 0);
-    if (ret < 0) {
+    if (ret < 0)
+    {
         fprintf(stderr, "Motor init failed\n");
         close(motor_fd);
         return EXIT_FAILURE;
     }
 
     ec11_fd = open(EC11_DEV_PATH, O_RDONLY | O_NONBLOCK);
-    if (ec11_fd < 0) {
+    if (ec11_fd < 0)
+    {
         perror("EC11 open");
         close(motor_fd);
         return EXIT_FAILURE;
+    }
+
+    /* LED Bar initialization */
+    if (ledbar_ctrl_init() == 0)
+    {
+        ledbar_active = 1;
+        printf("[LED BAR] Initialized\n");
+    }
+    else
+    {
+        fprintf(stderr, "[LED BAR] Initialization failed\n");
     }
 
     printf("Fan Application Started\n");
@@ -339,21 +375,23 @@ int main(int argc, char **argv)
     printf("Duty step=%d%%, reversed=%d\n",
            step, reversed);
 
-    while (running) {
+    while (running)
+    {
         int64_t now;
         struct pollfd pfd = {
             .fd = ec11_fd,
-            .events = POLLIN
-        };
+            .events = POLLIN};
 
         /* AUTO periodic measurement */
-        if (fan_mode == AUTO) {
+        if (fan_mode == AUTO)
+        {
             now = get_time_ms();
             if (now < 0)
                 break;
 
             if (next_sample == 0 ||
-                now >= next_sample) {
+                now >= next_sample)
+            {
 
                 ret = fan_update_auto(motor_fd, &fan);
                 if (ret < 0)
@@ -363,13 +401,15 @@ int main(int argc, char **argv)
                               SAMPLE_INTERVAL_MS;
             }
         }
-        else {
+        else
+        {
             next_sample = 0;
         }
 
         ret = poll(&pfd, 1, POLL_INTERVAL_MS);
 
-        if (ret < 0) {
+        if (ret < 0)
+        {
             if (errno == EINTR)
                 continue;
 
@@ -380,18 +420,21 @@ int main(int argc, char **argv)
         if (ret == 0)
             continue;
 
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+        {
             fprintf(stderr, "EC11 device error\n");
             break;
         }
 
-        if (pfd.revents & POLLIN) {
+        if (pfd.revents & POLLIN)
+        {
             ssize_t nread;
             size_t count, i;
 
             nread = read(ec11_fd, events, sizeof(events));
 
-            if (nread < 0) {
+            if (nread < 0)
+            {
                 if (errno == EINTR || errno == EAGAIN)
                     continue;
 
@@ -400,14 +443,16 @@ int main(int argc, char **argv)
             }
 
             if (nread == 0 ||
-                nread % sizeof(events[0]) != 0) {
+                nread % sizeof(events[0]) != 0)
+            {
                 fprintf(stderr, "Invalid EC11 event data\n");
                 break;
             }
 
             count = nread / sizeof(events[0]);
 
-            for (i = 0; i < count; i++) {
+            for (i = 0; i < count; i++)
+            {
                 ret = handle_ec11_event(
                     motor_fd,
                     &fan,
@@ -416,7 +461,8 @@ int main(int argc, char **argv)
                     step,
                     &next_sample);
 
-                if (ret < 0) {
+                if (ret < 0)
+                {
                     fprintf(stderr,
                             "Fan control error: %s\n",
                             strerror(-ret));
@@ -430,6 +476,13 @@ int main(int argc, char **argv)
     if (motor_set_duty(motor_fd, 0) < 0)
         fprintf(stderr, "Motor stop failed\n");
 
+    /* LED Bar cleanup */
+    if (ledbar_active)
+    {
+        ledbar_ctrl_close();
+        ledbar_active = 0;
+    }
+
     close(ec11_fd);
     close(motor_fd);
 
@@ -437,7 +490,6 @@ int main(int argc, char **argv)
 
     return EXIT_SUCCESS;
 }
-
 
 #if 0
 #include "fan_app.h"

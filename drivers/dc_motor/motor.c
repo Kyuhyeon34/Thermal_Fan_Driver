@@ -39,7 +39,7 @@ static int gpio_init(void)
     if (ret)
     {
         pr_info("GPIO direction set failed!!!\n");
-        goto err_in1;
+        goto err_in2;
     }
     ret = gpio_direction_output(GPIO_IN2, 0);
     if (ret)
