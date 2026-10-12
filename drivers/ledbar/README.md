@@ -1,5 +1,7 @@
 # LED 바 드라이버 (선풍기 프로젝트)
 
+빌드 경로 변경: `make -C drivers/ledbar`는 커널 모듈만, `make -C Testbench`는 테스트 앱을 빌드합니다. 아래 명령은 저장소 루트에서 실행하는 기준입니다.
+
 Jetson Orin Nano (JetPack 6 / L4T R36.5, Linux 5.15)용 8칸 LED 바 커널 드라이버와
 팀 전역변수 기반 표시 제어 코드.
 
@@ -8,11 +10,11 @@ Jetson Orin Nano (JetPack 6 / L4T R36.5, Linux 5.15)용 8칸 LED 바 커널 드�
 | `ledbar.c` | 커널 모듈 (platform driver + misc device + 커널 타이머 애니메이션) |
 | `ledbar_ioctl.h` | 커널/앱 공용 헤더 |
 | `ledbar_ctrl.c` / `ledbar_ctrl.h` | 전역변수(`fan_mode`, `TEMP`, `FAN_LEVEL`) 보고 LED 바 갱신 → **메인 앱에 같이 빌드** |
-| `fan_globals.h` | 팀 공용 전역변수 선언 |
-| `ledbar_test.c` | 드라이버 단독 테스트/시연 앱 |
-| `fan_led_sim.c` | 팀원 코드 없이 `ledbar_ctrl` 동작 확인하는 시뮬레이터 |
+| `Application/fan_globals.h` | 팀 공용 전역변수 선언 |
+| `Testbench/ledbar_test.c` | 드라이버 단독 테스트/시연 앱 |
+| `Testbench/fan_led_sim.c` | 팀원 코드 없이 `ledbar_ctrl` 동작 확인하는 시뮬레이터 |
 | `ledbar-overlay.dts` | DT 오버레이 (⚠️ 아직 실기 적용 확인 안 됨, 아래 참고) |
-| `Makefile` | `make` = 모듈 + dtbo, `make test`, `make sim` |
+| `Makefile` | `make` = 커널 모듈, `make dtbo` = 오버레이; 테스트/시뮬레이션은 Testbench에서 빌드 |
 
 ## 1. 배선
 
@@ -52,8 +54,8 @@ sudo cat /sys/kernel/debug/pinctrl/2430000.pinmux/pinconf-groups | grep -A4 -E "
 
 ```bash
 sudo apt install build-essential device-tree-compiler gpiod nvidia-l4t-kernel-headers
-make
-sudo insmod ledbar.ko nodt=1
+make -C drivers/ledbar
+sudo insmod drivers/ledbar/ledbar.ko nodt=1
 sudo dmesg | tail          # "LED 바 8칸 준비 완료 (/dev/ledbar)"
 sudo rmmod ledbar          # 내리면 전부 소등
 ```
@@ -72,7 +74,7 @@ echo stop > /dev/ledbar
 cat /dev/ledbar               # 상태
 cat /sys/devices/platform/ledbar/level
 
-make test && ./ledbar_test demo
+make -C Testbench ledbar_test && ./Testbench/ledbar_test demo
 ```
 
 ## 5. 메인 앱 연동 (`ledbar_ctrl`)
@@ -101,7 +103,7 @@ ledbar_ctrl_close();
 동작 확인:
 
 ```bash
-make sim && ./fan_led_sim
+make -C Testbench sim && ./Testbench/fan_led_sim
 ```
 
 ## 6. DT 오버레이 (선택, 미검증)

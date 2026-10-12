@@ -1,0 +1,1 @@
+cmd_/home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/modules.order := {   echo /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/ec11.ko;   echo /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/ledbar.ko; :; } | awk '!x[$$0]++' - > /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/modules.order

@@ -1,0 +1,1 @@
+cmd_/home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/Module.symvers := sed 's/\.ko$$/\.o/' /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/modules.order | scripts/mod/modpost -m   -o /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/Module.symvers -e -i Module.symvers   -T -
