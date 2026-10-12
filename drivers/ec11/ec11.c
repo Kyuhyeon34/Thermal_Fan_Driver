@@ -27,7 +27,7 @@
  * 1: bind to the "smartfan,ec11" device tree node (a-gpios, b-gpios, key-gpios)
  * 0: the module registers the platform device itself, pins are set below
  */
-#define CONF_DT 0
+#define CONF_DT 1
 
 #if CONF_DT
 #else

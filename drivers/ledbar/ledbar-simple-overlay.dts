@@ -1,0 +1,39 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    overlay-name = "SmartFan LED Bar";
+    jetson-header-name = "Jetson 40pin Header";
+
+    compatible = "nvidia,p3768-0000+p3767-0005-super";
+
+    fragment@0 {
+        target-path = "/";
+
+        __overlay__ {
+            ledbar {
+                compatible = "team,ledbar";
+                status = "okay";
+
+                /* LED1: Header 12, PH.07 */
+                /* LED2: Header 13, PY.00 */
+                /* LED3: Header 16, PY.04 */
+                /* LED4: Header 18, PY.03 */
+                /* LED5: Header 22, PY.01 */
+                /* LED6: Header 37, PY.02 */
+                /* LED7: Header 38, PI.01 */
+                /* LED8: Header 40, PI.00 */
+
+                led-gpios =
+                    <&gpio  63 0>,
+                    <&gpio 144 0>,
+                    <&gpio 148 0>,
+                    <&gpio 147 0>,
+                    <&gpio 145 0>,
+                    <&gpio 146 0>,
+                    <&gpio  65 0>,
+                    <&gpio  64 0>;
+            };
+        };
+    };
+};

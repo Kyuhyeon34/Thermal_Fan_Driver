@@ -1,0 +1,29 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    overlay-name = "SmartFan EC11";
+    jetson-header-name = "Jetson 40pin Header";
+
+    compatible = "nvidia,p3768-0000+p3767-0005-super";
+
+    fragment@0 {
+        target-path = "/";
+
+        __overlay__ {
+            ec11 {
+                compatible = "smartfan,ec11";
+                status = "okay";
+
+                /* EC11 S1: PQ.05, header pin 29 */
+                a-gpios = <&gpio 125 1>;
+
+                /* EC11 S2: PQ.06, header pin 31 */
+                b-gpios = <&gpio 126 1>;
+
+                /* EC11 KEY: PI.02, header pin 35 */
+                key-gpios = <&gpio 66 1>;
+            };
+        };
+    };
+};

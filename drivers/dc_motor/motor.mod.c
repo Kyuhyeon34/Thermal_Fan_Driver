@@ -28,30 +28,31 @@ MODULE_INFO(retpoline, "Y");
 static const struct modversion_info ____versions[]
 __used __section("__versions") = {
 	{ 0x5063314d, "module_layout" },
-	{ 0x6091b333, "unregister_chrdev_region" },
-	{ 0x7d4e4e48, "cdev_del" },
-	{ 0xd5920837, "pwm_free" },
-	{ 0xfe990052, "gpio_free" },
-	{ 0x55b5ce0f, "pwm_request" },
-	{ 0xd4d50f84, "gpiod_direction_output_raw" },
-	{ 0x47229b5c, "gpio_request" },
-	{ 0x2b25d7a3, "cdev_add" },
-	{ 0xb66ffcd7, "cdev_init" },
-	{ 0x3fd78f3b, "register_chrdev_region" },
-	{ 0x1e49e99f, "cpu_hwcaps" },
+	{ 0x46d3d6e4, "platform_driver_unregister" },
+	{ 0xa955d91, "__platform_driver_register" },
 	{ 0x12a4e128, "__arch_copy_from_user" },
+	{ 0x1e49e99f, "cpu_hwcaps" },
 	{ 0x31909811, "cpu_hwcap_keys" },
 	{ 0x14b89635, "arm64_const_caps_ready" },
+	{ 0x29c1c1c4, "dev_err_probe" },
+	{ 0xac49e8e8, "misc_register" },
+	{ 0xcee25a0c, "devm_pwm_get" },
+	{ 0xf078870e, "devm_gpiod_get" },
+	{ 0xcefb0c9f, "__mutex_init" },
+	{ 0xd8d38480, "devm_kmalloc" },
 	{ 0x3213f038, "mutex_unlock" },
 	{ 0x4dfa8d4b, "mutex_lock" },
+	{ 0x287f6da0, "misc_deregister" },
 	{ 0x3ea1b6e4, "__stack_chk_fail" },
+	{ 0x6188fcf, "_dev_err" },
+	{ 0x22ee4d20, "gpiod_set_value" },
 	{ 0xc098597f, "pwm_apply_state" },
-	{ 0xf193393, "gpiod_set_raw_value" },
-	{ 0x9a550c00, "gpio_to_desc" },
 	{ 0x4b0a3f52, "gic_nonsecure_priorities" },
-	{ 0x92997ed8, "_printk" },
+	{ 0x6881d240, "_dev_info" },
 	{ 0x1fdc7df2, "_mcount" },
 };
 
 MODULE_INFO(depends, "");
 
+MODULE_ALIAS("of:N*T*Csmartfan,dc-motor");
+MODULE_ALIAS("of:N*T*Csmartfan,dc-motorC*");
