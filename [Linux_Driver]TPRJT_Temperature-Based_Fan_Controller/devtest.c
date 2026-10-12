@@ -26,14 +26,6 @@ static dev_t devt;
 static struct cdev my_cdev;
 static struct pwm_device *motor_pwm;
 
-// module_param(gpio_in1, int, 0444);
-// module_param(gpio_in2, int, 0444);
-// module_param(pwm_id, int, 0444);
-
-// MODULE_PARM_DESC(gpio_in1, "Linux GPIO number for IN1");
-// MODULE_PARM_DESC(gpio_in2, "Linux GPIO number for IN2");
-// MODULE_PARM_DESC(pwm_id, "Global PWM ID for pin 33");
-
 static int gpio_init(void){
 
     int ret;
@@ -60,7 +52,7 @@ static int gpio_init(void){
     ret = gpio_direction_output(GPIO_IN2, 0);
     if (ret){
         pr_info("GPIO direction set failed!!!\n");
-        goto err_in1;
+        goto err_in2;
     }
 
     return 0;
