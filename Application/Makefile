@@ -1,6 +1,7 @@
 CC ?= aarch64-linux-gnu-gcc
 CFLAGS += -Wall -Wextra -O2
-CFLAGS += -I../drivers/dc_motor
+CFLAGS += -I../drivers/dc_motor \
+		 	-I ../drivers/merge_ec11_led
 
 all: fan_app
 
