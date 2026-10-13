@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.ko := ld -r -EL  -maarch64elf -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.ko /home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.o /home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.mod.o;  true

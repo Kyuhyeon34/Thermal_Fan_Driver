@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/bmp180_driver/modules.order := {   echo /home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.ko; :; } | awk '!x[$$0]++' - > /home/aidl/work/Project/linux_driver_project/bmp180_driver/modules.order

@@ -9,5 +9,8 @@
 !*.h
 !*.dts
 
+# Makefile 허용
+!Makefile
+
 # .gitignore 자체는 추적
 !.gitignore

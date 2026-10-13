@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/drivers/dc_motor/Module.symvers := sed 's/\.ko$$/\.o/' /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/modules.order | scripts/mod/modpost -m   -o /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/Module.symvers -e -i Module.symvers   -T -

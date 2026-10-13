@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.ko := ld -r -EL  -maarch64elf -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.ko /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.o /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.mod.o;  true

@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.mod := printf '%s\n'   bmp180.o | awk '!x[$$0]++ { print("/home/aidl/work/Project/linux_driver_project/bmp180_driver/"$$0) }' > /home/aidl/work/Project/linux_driver_project/bmp180_driver/bmp180.mod
