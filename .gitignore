@@ -14,3 +14,5 @@
 
 # .gitignore 자체는 추적
 !.gitignore
+# README 허용
+!README.md
