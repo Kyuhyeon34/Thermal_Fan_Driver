@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/ec11.mod := printf '%s\n'   ec11.o | awk '!x[$$0]++ { print("/home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/"$$0) }' > /home/aidl/work/Project/linux_driver_project/drivers/merge_ec11_led/ec11.mod

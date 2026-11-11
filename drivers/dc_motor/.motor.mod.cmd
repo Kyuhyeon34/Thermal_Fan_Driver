@@ -1,1 +1,0 @@
-cmd_/home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.mod := printf '%s\n'   motor.o | awk '!x[$$0]++ { print("/home/aidl/work/Project/linux_driver_project/drivers/dc_motor/"$$0) }' > /home/aidl/work/Project/linux_driver_project/drivers/dc_motor/motor.mod
