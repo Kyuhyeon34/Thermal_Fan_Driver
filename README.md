@@ -1,735 +1,586 @@
-# BMP180 기반 스마트 팬 — Linux Device Driver Project
+# 온도에 따라 풍량을 조절하는 Smart Fan
 
-NVIDIA Jetson Orin Nano에서 BMP180 온도 센서, EC11 로터리 엔코더, DC 모터, 8칸 LED 바를 Linux 커널 드라이버와 사용자 공간 앱으로 통합한 프로젝트입니다. 온도에 따른 자동 운전과 노브를 이용한 수동 풍량 제어를 제공하며, Device Tree에 하드웨어 자원을 기술하고 커널과 앱의 역할을 분리합니다.
+**수행 기간** · 2026.10.08 ~ 2026.10.13  
+**기술 스택** · C, Linux 커널 모듈, Device Tree, GNU Make  
+**개발 도구** · VS Code
 
-| 항목 | 기준 |
-|---|---|
-| 저장소 | [Kyuhyeon34/linux_driver_project](https://github.com/Kyuhyeon34/linux_driver_project) |
-| 대상 브랜치 | [dev/kjh](https://github.com/Kyuhyeon34/linux_driver_project/tree/dev/kjh) |
-| 확인 커밋 | [24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3](https://github.com/Kyuhyeon34/linux_driver_project/commit/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3) |
-| 소스 확인일 | 2026-10-13 |
-| 개발 대상 | Jetson Orin Nano / JetPack 6 계열 |
-| 기존 LED 문서의 환경 | L4T R36.5, Linux 5.15. 모든 릴리스에서 검증되었다는 뜻은 아님 |
+Jetson Orin Nano에서 BMP180 센서로 온도를 측정하고, 측정값에 따라 DC 팬을 제어하는 Embedded Linux 팀 프로젝트입니다. PWM(펄스 폭 변조)은 반복 신호에서 활성 구간의 비율인 듀티를 바꿔 모터 구동을 조절하는 방식입니다. 사용자 공간 앱 `fan_app`은 EC11 로터리 엔코더 입력으로 자동·수동·대기 모드를 전환하고, 8칸 LED 바로 현재 상태를 표시합니다.
 
-> **길게 누르기 기준은 2초(2000ms)**입니다. 기존 EC11/Testbench README에는 3초 또는 long_press_ms=3000 안내가 남아 있습니다. 이 문서는 현재 요청과 드라이버 기본값에 맞춰 2000ms를 사용합니다.
->
-> **모터의 최종 DT 적용 후 실제 PWM·회전·정지 기능 테스트는 확인되지 않았습니다.** 네 드라이버의 DT 구현 확인과 전체 실기 검증 완료를 구분합니다.
+**담당 · 고지현** — BMP180 커널 드라이버 개발과 IIO(Industrial I/O)를 통한 센서 측정값의 사용자 앱 연동.
+
+**소스 기준** · [`kobokdong/Thermal_Fan_Driver`의 `main` · `1c76e6f`](https://github.com/kobokdong/Thermal_Fan_Driver/tree/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6)
 
 ## 목차
 
-- [1. 프로젝트 개요](#1-프로젝트-개요)
-- [2. 시스템 아키텍처](#2-시스템-아키텍처)
-- [3. 하드웨어 핀 맵](#3-하드웨어-핀-맵)
-- [4. 네 커널 드라이버와 DT 매칭](#4-네-커널-드라이버와-dt-매칭)
-- [5. 커널–사용자 공간 인터페이스](#5-커널사용자-공간-인터페이스)
-- [6. WAIT / AUTO / MANUAL 로직](#6-wait--auto--manual-로직)
-- [7. 빌드·설치·실행](#7-빌드설치실행)
-- [8. 테스트 명령·결과·검증 상태](#8-테스트-명령결과검증-상태)
-- [9. 문제 해결](#9-문제-해결)
-- [10. 개발 과제와 남은 작업](#10-개발-과제와-남은-작업)
-- [11. 저장소 구조](#11-저장소-구조)
-- [12. 상세 문서와 근거](#12-상세-문서와-근거)
+- [온도에 따라 풍량을 조절하는 Smart Fan](#온도에-따라-풍량을-조절하는-smart-fan)
+  - [목차](#목차)
+  - [시스템 구성](#시스템-구성)
+  - [담당 역할](#담당-역할)
+  - [실행 환경](#실행-환경)
+    - [Device Tree에서 사용하는 연결](#device-tree에서-사용하는-연결)
+  - [빌드 및 실행](#빌드-및-실행)
+    - [Makefile이 빌드하는 대상](#makefile이-빌드하는-대상)
+    - [1. 소스 내려받기와 빌드 · 최초 설치 또는 소스 변경 시](#1-소스-내려받기와-빌드--최초-설치-또는-소스-변경-시)
+    - [2. Device Tree 오버레이 적용](#2-device-tree-오버레이-적용)
+    - [3. 모듈 로드와 인터페이스 확인](#3-모듈-로드와-인터페이스-확인)
+    - [4. 앱 시작 · 운전할 때마다](#4-앱-시작--운전할-때마다)
+  - [모드와 제어 규칙](#모드와-제어-규칙)
+  - [테스트와 검증](#테스트와-검증)
+    - [모터 PWM 시험](#모터-pwm-시험)
+    - [BMP180 실기 확인과 경계값 시험](#bmp180-실기-확인과-경계값-시험)
+    - [일반 문제 해결](#일반-문제-해결)
+    - [트러블슈팅 사례](#트러블슈팅-사례)
+      - [GPIO를 제어해도 LED가 켜지지 않았던 문제](#gpio를-제어해도-led가-켜지지-않았던-문제)
+      - [온도 경계에서 LED 칸 수가 반복해서 바뀌는 현상](#온도-경계에서-led-칸-수가-반복해서-바뀌는-현상)
+  - [알려진 제약과 코드 개선점](#알려진-제약과-코드-개선점)
+  - [요소기술](#요소기술)
+    - [1. Linux 커널](#1-linux-커널)
+    - [2. User Space와 Kernel Space](#2-user-space와-kernel-space)
+    - [3. Device Tree](#3-device-tree)
+    - [4. IIO](#4-iio)
+    - [5. ioctl](#5-ioctl)
+    - [6. Mutex](#6-mutex)
+    - [7. Makefile](#7-makefile)
+  - [코드 탐색](#코드-탐색)
 
-## 1. 프로젝트 개요
+## 시스템 구성
 
-| 계층 | 역할 |
-|---|---|
-| 하드웨어 | 온도·기압 측정, 회전·버튼 입력, 모터 구동, LED 표시 |
-| Device Tree | I2C 주소, GPIO 연결·극성, PWM 컨트롤러·주기, compatible 기술 |
-| 커널 | 센서 보정 및 IIO 등록, IRQ 입력 이벤트, GPIO·PWM 출력, 장치 인터페이스 제공 |
-| 사용자 공간 | 모드 전환, 온도 기반 duty 계산, 수동 풍량, LED 표시 정책 |
-
-실제 모터 ioctl을 호출하는 통합 앱은 **Application/fan_app**입니다. Testbench/fan_ctrl은 EC11·LED 통합 시험용이며 모터 적용 콜백에 TODO가 남아 있습니다. 시험 앱에서 duty가 변한다고 실제 모터 연동이 완료된 것은 아닙니다.
-
-네 드라이버 모두 DT 매칭 코드가 있습니다. LED에는 nodt=1 대체 시험 경로도 있으므로, DT 기반 구현과 네 장치 DT 동시 적용 성공을 별도로 기록합니다.
-
-## 2. 시스템 아키텍처
+앱은 커널이 장치 정보를 파일처럼 보여주는 `sysfs`에서 온도를 읽습니다. 입력을 기다릴 때는 `poll()`, 장치별 제어 명령을 보낼 때는 `ioctl()`을 사용합니다.
 
 ```mermaid
-flowchart TB
-    subgraph U["사용자 공간"]
-        APP["fan_app / 상태 머신"]
-        POLICY["AUTO 온도 정책 / MANUAL duty 조절"]
-        LC["ledbar_ctrl / 표시 정책"]
-        APP --> POLICY
-        APP --> LC
+flowchart TD
+    APP["사용자 공간 · fan_app"]
+    subgraph K["커널 공간 · 장치 드라이버"]
+        BMP["BMP180 드라이버"]
+        EC["EC11 드라이버"]
+        MOTOR["모터 드라이버"]
+        LED["LED 바 드라이버"]
     end
-    subgraph K["Linux 커널"]
-        BMP["bmp180.ko / I2C + IIO"]
-        EC["ec11.ko / platform + cdev / IRQ·FIFO"]
-        MOTOR["motor.ko / platform + misc / PWM·GPIO"]
-        LED["ledbar.ko / platform + misc / GPIO·timer"]
-        DT["Device Tree 오버레이"]
-        DT -.-> BMP
-        DT -.-> EC
-        DT -.-> MOTOR
-        DT -.-> LED
-    end
-    subgraph H["하드웨어"]
-        SENSOR["BMP180 / I2C 0x77"]
-        KNOB["EC11 / S1·S2·KEY"]
-        POWER["모터 구동 회로 / DC 팬"]
-        BAR["8칸 LED 바 / 저항 어레이"]
-    end
-    SENSOR <--> BMP
-    KNOB --> EC
-    BMP -->|"IIO sysfs / m°C"| APP
-    EC -->|"poll + read / ec11_event"| APP
-    POLICY -->|"ioctl / duty 0~100%"| MOTOR
-    LC -->|"ioctl / level·animation"| LED
-    MOTOR -->|"PWM5 + IN1·IN2"| POWER
-    LED -->|"GPIO 8개"| BAR
+    BMP -->|"IIO sysfs로 온도 읽기"| APP
+    EC -->|"poll 및 read로 이벤트 읽기"| APP
+    APP -->|"ioctl로 PWM 듀티 설정"| MOTOR
+    APP -->|"ioctl로 칸 수 및 애니메이션 설정"| LED
 ```
 
-센서값은 IIO sysfs, 입력은 문자 장치 이벤트, 출력은 ioctl로 전달합니다. BMP180 압력 채널도 구현되어 있지만 현재 팬 앱은 온도만 사용합니다. LED 애니메이션은 커널 타이머가 수행합니다.
+*개념도 · 앱이 커널 드라이버에서 입력을 읽고 제어 요청을 보내는 경로입니다.*
 
-## 3. 하드웨어 핀 맵
+| 구성 요소 | Linux 인터페이스 | 구현 |
+| --- | --- | --- |
+| [BMP180](drivers/bmp180/bmp180.c) | I²C, IIO sysfs | I²C(두 신호선으로 장치와 통신하는 방식)로 센서 ID와 보정 계수를 읽어 온도·기압 보정. `in_temp_input`은 m°C, `in_pressure_input`은 kPa로 제공 |
+| [DC 모터](drivers/dc_motor/motor.c) | `/dev/mydev`, PWM, GPIO | Device Tree에서 PWM과 방향 GPIO를 가져오고 `MY_IOCTL_CMD_SET_PWM`으로 듀티 0~100% 설정 |
+| [EC11](drivers/ec11/ec11.c) | `/dev/ec11`, GPIO 입력 | 핀 상태 변화에 따른 인터럽트로 회전·클릭·길게 누르기를 감지하고, 커널 큐 `kfifo`에 쌓인 이벤트를 `poll()`과 `read()`로 전달 |
+| [LED 바](drivers/ledbar/ledbar.c) | `/dev/ledbar`, GPIO 배열 | 최대 8칸 표시 및 타이머 기반 애니메이션. 앱은 [LED 제어 코드](drivers/ledbar/ledbar_ctrl.c)를 통해 표시를 갱신 |
+| [fan_app](Application/fan_app.c) | IIO sysfs, `poll()`, `ioctl()` | 모드 전환, 온도 샘플링, PWM 듀티 계산, 종료 시 모터 정지 요청 |
 
-### 번호 체계
+## 담당 역할
 
-배선은 **Jetson 40핀 헤더의 물리 핀 번호**를 기준으로 합니다. DT GPIO 지정값과 런타임 gpiochip 라인 번호는 서로 다릅니다. LED1은 헤더 12번, PH.07, DT 지정값 63, 기존 실측 gpiochip0 라인 50입니다.
+고지현은 BMP180 센서 드라이버 개발과 사용자 공간 앱 연동을 담당했습니다.
 
-신호 핀은 저장소 DTS와 주석으로 확인했습니다. BMP180의 헤더 3/5번 I2C 버스 7 연결은 [NVIDIA 개발자 포럼의 Orin Nano 안내](https://forums.developer.nvidia.com/t/orin-nano-and-i2c/251902)로 보완했습니다. 실제 I2C 버스 번호와 노드 경로는 대상 시스템에서 대조합니다.
+- [BMP180 드라이버](drivers/bmp180/bmp180.c)에서 I²C로 센서 ID와 EEPROM 보정 계수를 읽고, 원시값에 보정식을 적용해 온도·기압을 계산했습니다.
+- 측정 명령 → 변환 대기 → 결과 읽기·보정 순서를 뮤텍스로 보호해 동시 IIO 읽기 요청이 센서 측정 순서를 섞지 않도록 했습니다.
+- 보정값을 IIO sysfs로 제공하고 [`fan_app`](Application/fan_app.c)의 자동 모드에 온도 입력을 연동했습니다. 앱은 온도로 PWM 듀티를 계산하며, 읽기에 실패하면 0% 듀티를 요청합니다.
 
-### 전체 신호 연결
+**확인 범위** · 기준 커밋에서 IIO 채널 등록, 온도·기압 반환 단위, 앱의 온도 입력 경로를 확인했습니다. Jetson에서의 실제 드라이버 등록과 IIO 읽기 결과는 [검증 상태](#테스트와-검증)에 표시했습니다.
 
-| 장치 / 신호 | 헤더 물리 핀 | SoC 핀 / 기능 | DTS 지정 / 속성 | 극성·비고 |
-|---|---:|---|---|---|
-| BMP180 SDA | 3 | I2C SDA, 버스 7 기준 | /bus@0/i2c@c250000, reg=&lt;0x77&gt; | I2C 데이터 |
-| BMP180 SCL | 5 | I2C SCL, 버스 7 기준 | 위 I2C 부모 노드 | I2C 클록 |
-| EC11 S1 / A | 29 | PQ.05 | a-gpios=&lt;&amp;gpio 125 1&gt; | active-low |
-| EC11 S2 / B | 31 | PQ.06 | b-gpios=&lt;&amp;gpio 126 1&gt; | active-low |
-| EC11 KEY | 35 | PI.02 | key-gpios=&lt;&amp;gpio 66 1&gt; | active-low, 논리 1=눌림 |
-| 모터 구동 회로 IN1 | 7 | PAC.06 | in1-gpios=&lt;&amp;gpio 166 0&gt; | active-high |
-| 모터 구동 회로 IN2 | 15 | PN.01 | in2-gpios=&lt;&amp;gpio 105 0&gt; | active-high |
-| 모터 PWM / enable 입력 | 33 | PWM5 | pwms=&lt;&amp;pwm5 0 1000000&gt; | 채널 0, 1ms, 1kHz |
-| LED1 / 맨 아래 | 12 | PH.07 | &lt;&amp;gpio 63 0&gt; | active-high, bit0 |
-| LED2 | 13 | PY.00 | &lt;&amp;gpio 144 0&gt; | active-high, bit1 |
-| LED3 | 16 | PY.04 | &lt;&amp;gpio 148 0&gt; | active-high, bit2 |
-| LED4 | 18 | PY.03 | &lt;&amp;gpio 147 0&gt; | active-high, bit3 |
-| LED5 | 22 | PY.01 | &lt;&amp;gpio 145 0&gt; | active-high, bit4 |
-| LED6 | 37 | PY.02 | &lt;&amp;gpio 146 0&gt; | active-high, bit5 |
-| LED7 | 38 | PI.01 | &lt;&amp;gpio 65 0&gt; | active-high, bit6 |
-| LED8 / 맨 위 | 40 | PI.00 | &lt;&amp;gpio 64 0&gt; | active-high, bit7 |
-| 선택적 모드 LED | 11 | PR.04 | fan_ctrl 기본 gpiochip0 line=112 | Testbench 전용, fan_app에는 제어 코드 없음 |
+## 실행 환경
 
-EC11 DT는 S1/S2 반전을 active-low로 표현합니다. 과거 비-DT 코드에는 NPN 반전단 설명이 있으므로 실제 회로가 직접 연결인지 반전 회로인지 확인합니다. 전기적 입력 극성과 회전 방향 보정은 별개입니다.
+- Jetson Orin Nano Developer Kit와 JetPack 6 계열의 Jetson Linux를 기준으로 합니다. 아래 명령은 Jetson의 Bash에서 실행합니다.
+- 실행 중인 커널과 일치하는 커널 헤더 또는 빌드 트리, C 컴파일러, GNU Make, Device Tree Compiler(`dtc`)가 필요합니다. 드라이버 Makefile의 기본 커널 빌드 경로는 `/lib/modules/$(uname -r)/build`입니다.
+- 주변 장치는 BMP180, EC11, PWM·방향 입력을 받는 모터 구동 회로와 DC 팬, 8칸 LED 바입니다. LED 바 초기화에 실패해도 앱은 온도 측정과 팬 제어를 계속합니다.
 
-### 전원·접지·저항 연결
+### Device Tree에서 사용하는 연결
 
-저장소에는 완전한 회로도, 모터 구동 보드 모델·전원 정격, 모든 전원 핀의 실측 기록이 없습니다. 아래는 연결 기준과 미확인 범위를 함께 정리한 것입니다.
-
-| 연결 | 기준 / 확인 사항 |
-|---|---|
-| BMP180 VCC/VDD | 실제 센서 보드 정격 확인. 3.3V 사용 가능 보드는 헤더 1/17번을 전원 후보로 사용할 수 있음. 실제 사용 핀은 미기록 |
-| BMP180·EC11·모터 제어 회로 GND | Jetson GND와 공통 기준 연결. 예: 헤더 6번. 실제 사용 핀은 미기록 |
-| EC11 전원·반전단 | 모듈 정격·풀업·NPN 반전단 유무 확인. Jetson 입력에 5V 신호 직접 연결 금지 |
-| 모터 전원·출력 | 별도 모터 구동 회로 사용. 구동 보드의 입력 규격, 전원 정격, 모터 출력 단자 배선은 실기 확인 필요 |
-| LED 애노드 | Jetson GPIO → LED 애노드(+) |
-| LED 캐소드·저항 | LED 캐소드(−) → 9A331G 2~9번, 9A331G 1번(점 표시 공통) → GND. 개별 저항 핀 순서는 실제 배선 확인 |
-
-기존 LED 문서의 nodt 라인 순서는 다음과 같습니다.
-
-```text
-LED1~8 gpiochip0 라인: 50,122,126,125,123,124,52,51
-물리 헤더 핀:          12,13,16,18,22,37,38,40
+```mermaid
+flowchart TD
+    S["BMP180 센서 모듈 · GY-68"] <-->|"I²C · 헤더 3 및 5"| J["Jetson Orin Nano"]
+    E["EC11 엔코더"] -->|"A · B · KEY · 헤더 29 및 31 및 35"| J
+    J -->|"PWM 및 방향 · 헤더 33 및 7 및 15"| M["L298N 모터 구동 보드"]
+    J -->|"GPIO 8채널"| L["8칸 LED 바"]
+    M --> F["R300 DC 모터와 팬"]
 ```
 
-이 번호를 DT 지정값 63/144/148/... 대신 사용하지 않습니다. gpiodetect, gpioinfo, gpiofind로 **핀 이름**을 대조합니다. 모터를 GPIO 핀에 직접 연결하지 않으며 LED에는 전류 제한 저항을 사용합니다.
+*신호 연결도 · 팀 발표 자료 4~5번 슬라이드의 부품과 저장소 DTS의 연결을 바탕으로 그렸습니다. 물리 핀 번호는 아래 표와 함께 확인합니다.*
 
-## 4. 네 커널 드라이버와 DT 매칭
+| 장치 | 저장소 오버레이 설정 |
+| --- | --- |
+| [BMP180](drivers/bmp180/bmp180-overlay.dts) | SDA 헤더 3번, SCL 5번. I²C 노드 `/bus@0/i2c@c250000`, 7비트 주소 `0x77` |
+| [DC 모터](drivers/dc_motor/motor-overlay.dts) | 방향 IN1 헤더 7번, IN2 15번. PWM5 헤더 33번, 1 kHz |
+| [EC11](drivers/ec11/ec11-overlay.dts) | A/B/KEY 헤더 29/31/35번, GPIO active-low |
+| [LED 바](drivers/ledbar/ledbar-overlay.dts) | LED1→LED8 헤더 12/13/16/18/22/37/38/40번, GPIO active-high |
 
-| 모듈 | 등록 방식 / 드라이버 이름 | 장치 compatible | DT 자원 | 사용자 인터페이스 |
-|---|---|---|---|---|
-| bmp180.ko | I2C driver / bmp180_custom | custom,bmp180 | I2C 부모 노드, reg=0x77 | IIO sysfs |
-| ec11.ko | platform driver + cdev / ec11 | smartfan,ec11 | a-gpios, b-gpios, key-gpios | /dev/ec11 |
-| motor.ko | platform driver + misc / smartfan-motor | smartfan,dc-motor | in1-gpios, in2-gpios, pwms, pwm-names="motor" | /dev/mydev |
-| ledbar.ko | platform driver + misc / ledbar | team,ledbar | led-gpios 배열, 선택적 pinctrl | /dev/ledbar, platform sysfs |
+LED1을 예로 들면, **12번**은 보드에 선을 꽂는 위치, **63**은 DTS에서 GPIO를 지정하는 값, **50**은 기존 환경의 `gpiochip0`에서 조회한 라인 번호입니다.
 
-각 드라이버는 of_match_table 및 MODULE_DEVICE_TABLE(of, ...)을 제공합니다. compatible 일치, 자원 획득, probe 성공 이후에 인터페이스가 생깁니다. **lsmod에 이름이 보이는 것만으로 바인딩 성공을 판정하지 않습니다.**
+| 신호 | 물리 헤더 | SoC 핀 이름 | DTS 지정값 | 기존 런타임 기록 |
+| --- | --- | --- | --- | --- |
+| LED1 | 12번 | `PH.07` | `<&gpio 63 0>` | `gpiochip0` 라인 50 |
 
-**보드 compatible과 장치 compatible은 다릅니다.** BMP180/EC11/모터/LED simple 오버레이의 루트 compatible은 nvidia,p3768-0000+p3767-0005-super입니다. LED full 오버레이에는 여러 비-super 문자열이 있지만 이 super 문자열은 없습니다. 실제 /proc/device-tree/compatible과 비교해야 합니다.
+대상 보드에서 `gpiodetect`로 GPIO 칩을 식별하고, `sudo gpioinfo | grep -F 'PH.07'`로 해당 칩의 라인과 핀 이름을 대조합니다. I²C 노드와 I²C·PWM·GPIO 핀 기능도 실제 구성에서 확인합니다. [LED full DTS](drivers/ledbar/ledbar-overlay.dts) · [핀 번호 기록](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/README.md#L86-L138) · [NVIDIA Jetson 확장 헤더 문서](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/HR/ConfiguringTheJetsonExpansionHeaders.html)
 
-### BMP180 — I2C / IIO
+## 빌드 및 실행
 
-- probe에서 I2C_FUNC_I2C, 0xD0의 chip ID 0x55, 보정 계수 블록을 검사합니다.
-- 0xAA부터 22바이트를 읽어 11개 계수를 저장합니다. AC4/AC5/AC6는 unsigned, 나머지는 signed입니다.
-- 레지스터 주소 쓰기와 데이터 읽기를 한 번의 i2c_transfer로 요청합니다. 부분 전송은 -EIO로 처리합니다.
-- 0xF4에 온도 변환 명령 0x2E를 쓰고 5~6ms 대기한 뒤 0xF6부터 UT를 읽습니다.
-- 64비트 중간 계산, 분모·범위 검사를 수행합니다. 변환 순서는 mutex로 보호합니다.
-- 온도 보정 0.1°C 결과를 m°C로 변환합니다. 압력은 온도에서 계산한 B5를 이용하며 kPa로 노출합니다.
-- 기본 OSS=0, 현재 사용자 설정 인터페이스는 없습니다. 온도 −40~85°C, 압력 30000~110000Pa를 검사합니다.
-- IIO 이름은 bmp180_custom, INDIO_DIRECT_MODE입니다. 버퍼 스트리밍 방식이 아닙니다.
+### Makefile이 빌드하는 대상
 
-### EC11 — IRQ / 이벤트 FIFO
+Makefile에는 생성할 대상, 필요한 소스·헤더, 실행할 빌드 명령이 들어 있습니다. `make -C <디렉터리>`는 해당 디렉터리의 Makefile을 실행합니다. 이 저장소에서는 커널 모듈과 사용자 공간 프로그램의 빌드 경로가 나뉩니다.
 
-- 현재 CONF_DT=1이므로 DT 노드가 필요합니다. 이전 비-DT lookup table은 활성 빌드 경로가 아닙니다.
-- S1/S2 양쪽 에지 IRQ와 quadrature 전이 테이블로 방향을 판정합니다.
-- 기본 steps_per_detent=4이며 1/2/4를 지원합니다. 디텐트에서 전이를 누적하여 접점 바운스의 왕복 변화를 상쇄합니다.
-- KEY debounce 기본 20ms. 안정된 눌림 이후 long_press_ms=2000 타이머를 시작합니다.
-- CLICK은 해제 시 발생하고 LONG_PRESS는 누르고 있는 동안 한 번 발생합니다. LONG 이후 해제 때 CLICK을 추가하지 않습니다.
-- FIFO 64개, read 1회의 최대 반환 16개 이벤트. 포화 시 이벤트를 버리고 경고합니다.
-- spinlock, wait queue, poll을 사용합니다. open 시 기존 FIFO를 비우므로 입력 소비 앱을 동시에 실행하지 않습니다.
+| Makefile | 동작 | 산출물 |
+| --- | --- | --- |
+| [드라이버 예시](drivers/bmp180/Makefile) | `obj-m`으로 외부 모듈을 지정합니다. `make -C <커널 빌드 경로> M=<드라이버 디렉터리> modules`로 커널의 빌드 시스템인 Kbuild를 호출합니다. | 드라이버 디렉터리의 `.ko` |
+| [Application](Application/Makefile) | C 컴파일러로 `fan_app.c`와 `ledbar_ctrl.c`를 컴파일하고 링크합니다. | `Application/fan_app` |
+| [Testbench](Testbench/Makefile) | 기본 타깃은 `ec11_test`, `ledbar_test`, `fan_ctrl`을 빌드합니다. `sim` 타깃은 `fan_led_sim`을 빌드합니다. | `Testbench/` 아래의 테스트 실행 파일 |
 
-### DC 모터 — GPIO / PWM consumer
-
-- devm_gpiod_get으로 IN1/IN2를 LOW 상태로 받고 devm_pwm_get(dev, "motor")로 PWM을 받습니다.
-- 코드에서도 주기를 1000000ns로 설정합니다. DT 주기만 변경해도 실제 주기가 따라 바뀌지는 않습니다.
-- duty 1~100%: IN1=1, IN2=0, 정상 극성 PWM 활성화.
-- duty 0%: PWM 비활성화, IN1/IN2=0.
-- ioctl을 mutex로 보호하고 범위를 검사합니다. PWM 적용 실패 시 정지를 시도합니다.
-- probe 초기화, 파일 close, remove에서 정지 경로가 있습니다.
-- ABI는 duty 설정 하나이며 역회전·RPM 피드백·duty 조회는 구현되어 있지 않습니다.
-
-**위 내용은 소스 확인 결과입니다. 최종 DT로 바인딩한 실제 보드의 PWM 파형·회전·정지 검증은 대기 상태입니다.**
-
-### LED 바 — GPIO 배열 / timer
-
-- devm_gpiod_get_array로 1~8개 LED GPIO를 획득합니다.
-- 타이머 문맥에서 출력하므로 sleep 가능한 GPIO 컨트롤러는 거부합니다.
-- 레벨·비트 패턴·BLINK/WAVE/PROGRESS를 지원합니다. 기본 주기는 각각 500/60/375ms입니다.
-- nodt=1은 GPIO lookup table과 platform device를 직접 만드는 대체 시험 경로입니다.
-- remove/shutdown에서 타이머를 종료하고 소등합니다.
-- full 오버레이는 pinctrl의 tristate/open-drain 등을 설정합니다. simple 오버레이는 이 설정이 없으므로 별도 핀 설정을 확인합니다.
-
-PROGRESS 기본 8×375ms=3초는 **독립 LED 애니메이션 시간**입니다. EC11 길게 누르기 2초와 동일한 설정이 아니며 현재 fan_app은 버튼 누름 진행 표시를 연결하지 않습니다.
-
-## 5. 커널–사용자 공간 인터페이스
-
-| 장치 | API | 데이터 / 의미 |
-|---|---|---|
-| BMP180 | in_temp_input 읽기 | 정수 m°C, 예: 25000 → 25.0°C |
-| BMP180 | in_pressure_input 읽기 | kPa 소수 표기, 예: 101.325000 → 101325Pa |
-| EC11 | read / poll | struct ec11_event 배열 / FIFO 읽기 가능 상태 |
-| EC11 | EC11_IOCTL_GET_COUNT | int 누적 카운트 |
-| EC11 | EC11_IOCTL_RESET_COUNT | 카운트·회전 누적값 초기화 |
-| 모터 | MY_IOCTL_CMD_SET_PWM | __u32 포인터, 0~100, _IOW('M',0,__u32) |
-| LED | LEDBAR_SET_LEVEL | __s32 포인터, 0~8칸 |
-| LED | LEDBAR_SET_PATTERN | __u8 포인터, bit0=LED1 |
-| LED | LEDBAR_SET_ANIM | struct ledbar_anim: 종류·주기 |
-| LED | LEDBAR_GET_STATE | struct ledbar_state: 목표·현재 패턴, 레벨, 애니메이션 등 |
-
-위 숫자는 **단위 설명 예시이며 실측 결과가 아닙니다.**
-
-```c
-struct ec11_event {
-    int type;   /* ROTATE=1, CLICK=2, LONG_PRESS=3, STATE=4 */
-    int delta;  /* ROTATE: +1 또는 -1 */
-    int count;  /* 발생 시점의 누적 카운트 */
-    int state;  /* bit0 S1, bit1 S2, bit2 KEY(1=눌림) */
-};
-
-/* 모터에는 정수 자체가 아니라 포인터를 전달 */
-__u32 duty = 40;
-ioctl(motor_fd, MY_IOCTL_CMD_SET_PWM, &duty);
-```
-
-공유 헤더를 커널과 앱에서 함께 사용합니다. EC11 이벤트는 바이너리 레코드이므로 cat /dev/ec11 대신 테스트 앱을 사용합니다.
-
-### IIO 번호 확인
-
-fan_app.h의 TEMP_PATH는 iio:device0/in_temp_input으로 고정되어 있습니다. 탐색 순서에 따라 번호가 달라질 수 있습니다.
+### 1. 소스 내려받기와 빌드 · 최초 설치 또는 소스 변경 시
 
 ```bash
-for d in /sys/bus/iio/devices/iio:device*; do
-    printf '%s: ' "$d"
-    cat "$d/name"
+git clone --branch main https://github.com/kobokdong/Thermal_Fan_Driver.git
+cd Thermal_Fan_Driver
+git checkout --detach 1c76e6f1a0d9e915cf661714f6876eab51e2cbd6
+git rev-parse --short HEAD
+
+head -n 1 /etc/nv_tegra_release
+uname -r
+test -f "/lib/modules/$(uname -r)/build/Makefile"
+```
+
+커밋, Jetson Linux 릴리스, 커널 버전을 실기 시험 결과와 함께 기록합니다. 마지막 명령이 실패하면 실행 커널과 일치하는 빌드 환경을 준비합니다. 이후 명령은 저장소 루트에서 실행합니다.
+
+```bash
+make -C drivers/bmp180
+make -C drivers/dc_motor modules
+make -C drivers/ec11
+make -C drivers/ledbar
+make -C Application
+```
+
+각 드라이버 디렉터리에 `bmp180.ko`, `motor.ko`, `ec11.ko`, `ledbar.ko`가 생성되고, 앱은 `Application/fan_app`으로 빌드됩니다.
+
+### 2. Device Tree 오버레이 적용
+
+최초 설정 또는 오버레이 변경 시 진행합니다.
+
+```bash
+tr '\0' '\n' < /proc/device-tree/compatible
+```
+
+BMP180·모터·EC11 오버레이는 `nvidia,p3768-0000+p3767-0005-super`를 대상으로 작성됐습니다. 실제 보드의 `compatible`, 기본 DTB의 `gpio`·`pwm5` 심볼, I²C 대상 노드와 헤더의 핀 기능을 대조합니다.
+
+| LED 오버레이 | 선택 조건 | 빌드 결과 |
+| --- | --- | --- |
+| [full](drivers/ledbar/ledbar-overlay.dts) | `pinctrl`을 오버레이에 포함합니다. 기본 DTB의 `pinmux` 심볼을 확인하고, Super 보드에서 사용하려면 루트 `compatible`에 실제 보드 문자열을 추가합니다. | `make -C drivers/ledbar dtbo` → `drivers/ledbar/ledbar.dtbo` |
+| [simple](drivers/ledbar/ledbar-simple-overlay.dts) | Super 보드 문자열이 들어 있습니다. LED 핀의 GPIO 출력 기능과 핀 설정은 Jetson-IO 등으로 별도 확인합니다. | 아래 `dtc` 명령 → `drivers/ledbar/ledbar-simple.dtbo` |
+
+두 오버레이 모두 `/ledbar` 노드를 정의합니다. 부팅 항목에는 선택한 LED DTBO 하나를 등록합니다. [저장소의 핀 설정·DTBO 절차](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/README.md#L364-L393)
+
+먼저 BMP180·모터·EC11의 DTBO를 만듭니다.
+
+```bash
+dtc -@ -I dts -O dtb -o drivers/bmp180/bmp180.dtbo drivers/bmp180/bmp180-overlay.dts
+dtc -@ -I dts -O dtb -o drivers/dc_motor/motor.dtbo drivers/dc_motor/motor-overlay.dts
+dtc -@ -I dts -O dtb -o drivers/ec11/ec11.dtbo drivers/ec11/ec11-overlay.dts
+```
+
+위 세 명령의 성공을 확인한 뒤, 같은 Bash에서 선택한 LED 빌드 블록 하나를 실행합니다.
+
+**full**
+
+```bash
+unset ledbar_dtbo
+make -C drivers/ledbar dtbo && ledbar_dtbo=drivers/ledbar/ledbar.dtbo
+```
+
+**simple**
+
+```bash
+unset ledbar_dtbo
+dtc -@ -I dts -O dtb -o drivers/ledbar/ledbar-simple.dtbo \
+    drivers/ledbar/ledbar-simple-overlay.dts && ledbar_dtbo=drivers/ledbar/ledbar-simple.dtbo
+```
+
+```bash
+test -f "${ledbar_dtbo:-}" && sudo cp drivers/bmp180/bmp180.dtbo drivers/dc_motor/motor.dtbo \
+    drivers/ec11/ec11.dtbo "$ledbar_dtbo" /boot/
+```
+
+`/boot/extlinux/extlinux.conf`에서 사용할 부팅 항목의 `FDT`가 보드에 맞는 DTB를 가리키는지 확인합니다. 같은 항목의 `OVERLAYS`에 DTBO를 추가한 뒤 해당 항목으로 재부팅합니다. 이전 LED DTBO 경로가 있으면 선택한 경로로 교체하고, 다른 장치에 필요한 오버레이는 쉼표로 이어 둡니다. 아래는 full을 선택한 예입니다. simple을 선택했다면 마지막 경로에 `/boot/ledbar-simple.dtbo`를 사용합니다. [NVIDIA 오버레이 문서](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/HR/JetsonModuleAdaptationAndBringUp/JetsonOrinNxNanoSeries.html#device-tree-overlays) · [여러 DTBO 경로 지정 예시](https://forums.developer.nvidia.com/t/multiple-device-overlays/313975)
+
+```text
+OVERLAYS /boot/bmp180.dtbo,/boot/motor.dtbo,/boot/ec11.dtbo,/boot/ledbar.dtbo
+```
+
+재부팅 후 실행 중인 Device Tree에 장치 노드가 생겼는지 확인합니다.
+
+```bash
+ls -d /proc/device-tree/bus@0/i2c@c250000/bmp180@77 \
+    /proc/device-tree/motor /proc/device-tree/ec11 /proc/device-tree/ledbar
+```
+
+### 3. 모듈 로드와 인터페이스 확인
+
+모듈을 아래 방식으로 수동 로드했다면 재부팅 후 이 단계부터 진행합니다.
+
+```bash
+sudo insmod drivers/bmp180/bmp180.ko
+sudo insmod drivers/dc_motor/motor.ko
+sudo insmod drivers/ec11/ec11.ko
+sudo insmod drivers/ledbar/ledbar.ko
+
+ls -l /dev/mydev /dev/ec11
+for dev in /sys/bus/iio/devices/iio:device*; do
+    [ -r "$dev/name" ] || continue
+    [ "$(cat "$dev/name")" = bmp180_custom ] || continue
+    printf '%s\n' "$dev"
+    cat "$dev/in_temp_input" "$dev/in_pressure_input"
 done
 ```
 
-bmp180_custom이 다른 번호라면 Application/fan_app.h의 TEMP_PATH를 수정하고 앱을 재빌드합니다. 현재 센서 경로를 지정하는 CLI 옵션은 없습니다.
+| 인터페이스 | 필요한 시점 |
+| --- | --- |
+| `/dev/mydev`, `/dev/ec11` | 앱 시작에 필요합니다. 앱은 시작할 때 모터에 0% 듀티 설정도 요청합니다. |
+| `bmp180_custom` IIO 장치 | `AUTO` 모드의 온도 기반 제어에 필요합니다. |
+| `/dev/ledbar` | LED 표시 기능에 필요합니다. LED 바 초기화에 실패해도 앱은 실행됩니다. |
 
-### LED 텍스트 및 sysfs
+**LED DT 바인딩 확인** — 노드가 존재하는지, 드라이버의 `probe()`가 완료됐는지, 장치 파일이 생성됐는지 순서대로 확인합니다.
 
 ```bash
-printf '5\n' | sudo tee /dev/ledbar
-printf 'p 0xA5\n' | sudo tee /dev/ledbar
-printf 'blink 300\n' | sudo tee /dev/ledbar
-printf 'wave\n' | sudo tee /dev/ledbar
-printf 'progress\n' | sudo tee /dev/ledbar
-printf 'stop\n' | sudo tee /dev/ledbar
-cat /dev/ledbar
-printf '0\n' | sudo tee /dev/ledbar
+test -d /proc/device-tree/ledbar && printf '%s\n' 'LED DT node present'
+ls -l /sys/bus/platform/devices/ledbar/driver
+sudo dmesg | grep -i ledbar
+ls -l /dev/ledbar
 ```
 
-stop/none/off는 애니메이션 NONE의 별칭으로 기본 패턴을 표시합니다. **소등에는 레벨 0을 사용합니다.** platform sysfs에는 level, pattern, anim 속성이 있습니다. nodt 경로는 /sys/devices/platform/ledbar/이며 DT 경로는 실제 platform 장치 위치를 확인합니다.
+`driver` 심볼릭 링크의 대상은 `/sys/bus/platform/drivers/ledbar`입니다. 로그에서 LED 바 준비 메시지와 `/dev/ledbar`를 확인합니다. 노드가 없다면 실제 부팅 항목과 오버레이 경로부터, 노드는 있고 바인딩이 없으면 장치 `compatible`·GPIO 자원·`probe()` 오류부터 확인합니다. [LED 장치 매칭과 등록](drivers/ledbar/ledbar.c)
 
-## 6. WAIT / AUTO / MANUAL 로직
+IIO 이름이 `bmp180_custom`인 장치에서 온도와 기압을 읽을 수 있어야 합니다. 예를 들어 온도 값 `25000`은 25.0 °C입니다. 앱의 [`TEMP_PATH`](Application/fan_app.h)는 `iio:device0`을 사용합니다. BMP180이 다른 번호로 등록되면 찾은 경로로 `TEMP_PATH`를 바꾼 뒤 `make -C Application`을 다시 실행합니다.
 
-### 모드 전환
+### 4. 앱 시작 · 운전할 때마다
+
+```bash
+sudo ./Application/fan_app
+```
+
+`Fan Application Started`와 `[MODE] WAIT`가 표시되면 엔코더 버튼을 짧게 눌러 시작합니다. `-s <듀티 단계>`로 수동 모드의 회전 한 칸당 변화량을 1~100%p 범위에서 설정할 수 있습니다. 회전 방향이 반대로 느껴지면 `-r` 옵션을 사용합니다. `Ctrl+C`로 종료하면 앱이 모터 듀티를 0%로 설정하고 열린 장치를 닫습니다.
+
+## 모드와 제어 규칙
 
 ```mermaid
 stateDiagram-v2
     [*] --> WAIT
-    WAIT --> MANUAL: 첫 짧은 클릭
-    MANUAL --> AUTO: 짧은 클릭
-    AUTO --> MANUAL: 짧은 클릭
-    MANUAL --> WAIT: 2초 길게 누르기 / MANUAL 저장
-    AUTO --> WAIT: 2초 길게 누르기 / AUTO 저장
-    WAIT --> AUTO: 저장 모드가 AUTO일 때 짧은 클릭
+    WAIT --> MANUAL: 첫 클릭 또는 이전 수동 모드 복귀
+    WAIT --> AUTO: 이전 자동 모드 복귀
+    MANUAL --> AUTO: 짧게 클릭
+    AUTO --> MANUAL: 짧게 클릭
+    MANUAL --> WAIT: 길게 누름
+    AUTO --> WAIT: 길게 누름
 ```
 
-| 상태 / 입력 | 동작 |
-|---|---|
-| 앱 시작 | WAIT, 모터 0%, 저장 모드 MANUAL, 수동 duty 0% |
-| WAIT의 짧은 클릭 | 저장 모드 복귀. 최초에는 MANUAL |
-| AUTO/MANUAL의 짧은 클릭 | AUTO ↔ MANUAL |
-| AUTO/MANUAL의 2초 길게 누르기 | 현재 모드 저장 후 WAIT, 모터·LED 소등 |
-| WAIT의 길게 누르기 | 상태 유지 |
-| MANUAL 회전 | manual_duty += delta × step, 0~100% 제한 |
-| AUTO/WAIT 회전 | 회전 카운터 갱신, 수동 duty 변경 없음 |
-| SIGINT/SIGTERM | 루프 종료 후 모터 0%, LED 소등, 장치 close |
+*개념도 · 엔코더 버튼으로 운전 모드를 전환하는 흐름입니다.*
 
-WAIT는 앱이 실행 중인 출력 정지 상태입니다. MANUAL duty는 WAIT 왕복과 AUTO 전환 과정에서 유지됩니다. 최초 MANUAL 진입 시 0%이므로 회전하여 duty를 올립니다.
+| 모드 | 동작 |
+| --- | --- |
+| `WAIT` | 모터 듀티를 0%로 설정하고 대기합니다. |
+| `MANUAL` | 다이얼 한 칸당 기본 5%p씩 듀티를 바꿉니다. 범위는 0~100%입니다. |
+| `AUTO` | 약 1초 간격으로 온도를 읽어 모터 듀티를 결정합니다. |
 
-기본 회전 단위는 5%, 앱 ROTATE_REVERSED=1입니다. -r은 앱 반전을 토글합니다. 드라이버 reverse 파라미터도 별도로 있으므로 이중 보정을 피하고 적용 값을 기록합니다.
+- **팬 기동·정지 히스테리시스** — 22 °C 이상에서 켜고 20 °C 미만에서 끕니다. 20 °C 이상 22 °C 미만에서는 이전 ON/OFF 상태를 유지해 반복 기동을 줄입니다.
+- **AUTO PWM 듀티** — 팬이 켜진 상태에서 22 °C 이하는 40%, 22~32 °C는 40~100% 선형 증가, 32 °C 이상은 100%입니다. 40%는 코드의 최소 듀티 설정값이며, 해당 듀티에서의 실제 기동 여부는 실기 확인 항목입니다.
+- **LED 표시 히스테리시스** — `AUTO`에서는 온도를 0~8칸으로 표시합니다. 기준 경계는 첫 칸 21 °C부터 마지막 칸 28 °C까지 1 °C 간격이며, 각 경계에 ±0.2 °C의 폭을 둬 표시 흔들림을 줄입니다. `MANUAL`에서는 듀티를 0~8칸으로 표시하고, `WAIT`에서는 LED를 끕니다.
 
-### AUTO 정책
+동작 중 짧게 클릭하면 `MANUAL`과 `AUTO`가 전환되고, 기본 2초 동안 누르면 `WAIT`로 돌아갑니다. `WAIT`에서 클릭하면 이전 모드로 복귀합니다. 수동 듀티와 자동 제어의 ON/OFF 상태는 모드 전환을 거쳐 유지됩니다. `AUTO`로 복귀하면 온도를 새로 읽습니다. 예를 들어 직전 `AUTO`에서 팬이 켜져 있었고 복귀 후 새 온도가 21 °C라면, 코드상 40% 듀티로 다시 구동됩니다.
 
-AUTO는 약 1초 간격으로 온도를 읽고 EC11 poll은 최대 100ms씩 대기합니다. 이는 정확한 실시간 주기·입력 지연 보장값이 아닙니다.
+`AUTO`에서 온도를 읽지 못하면 `BMP180 read failed`를 출력하고 자동 제어 상태를 OFF로 초기화합니다. 직전에 모터가 동작 중이었다면 0% 듀티를 요청합니다. LED 바는 마지막 온도를 표시할 수 있습니다. 이후 온도 읽기가 복구되면 OFF 상태의 기동 기준인 22 °C를 다시 적용합니다.
 
-- OFF 상태에서 22.0°C 이상이면 ON.
-- ON 상태에서 20.0°C 미만이면 OFF. 정확히 20.0°C에서는 ON 유지.
-- ON 상태의 22.0°C 이하는 40%, 32.0°C 이상은 100%.
-- 22~32°C 구간은 정수 계산: duty = 40 + (온도_mC − 22000) × 60 / 10000.
-
-| 온도 | 직전 AUTO 상태 | 예상 duty |
-|---:|---|---:|
-| 19.9°C | ON/OFF 무관 | 0% |
-| 20.0°C | OFF | 0% |
-| 20.0°C | ON | 40% |
-| 22.0°C | OFF | 40% |
-| 25.0°C | ON | 58% |
-| 27.0°C | ON | 70% |
-| 32.0°C | ON | 100% |
-
-표는 **소스 계산식 예상값이며 모터 실측 결과가 아닙니다.** auto_on은 정상 모드 전환만으로 항상 초기화되지는 않으며 AUTO 복귀 시 새 온도를 읽습니다.
-
-센서 읽기 실패·범위 오류 시 temp_valid=false, auto_on=false로 만들고 AUTO 출력은 0%입니다. 이후 샘플에서 재시도합니다.
-
-### LED 표시
-
-| 모드 | 표시 |
-|---|---|
-| WAIT | 0칸 |
-| MANUAL | FAN_LEVEL=(duty×8+99)/100, 0%=0칸, 100%=8칸 |
-| AUTO | 21°C부터 1칸, 27°C 구간 7칸, 28°C 이상 8칸. 경계 ±0.2°C에서 이전 표시 유지 |
-| WAIT → 운전 | WAVE 한 번 요청 후 목표 패턴 복귀. 후속 레벨 변경이 WAVE를 중단할 수 있음 |
-
-AUTO LED는 온도 표시이므로 모터 duty와 일대일 대응하지 않습니다. 21°C에서 모터 OFF인데 LED가 켜질 수 있습니다. 온도 읽기 실패 시 TEMP가 마지막 정상값으로 유지되어 LED도 이전 온도를 표시할 수 있습니다.
-
-LED 초기화 실패는 경고 후 계속 실행하지만 모터/EC11 open 실패는 앱 시작 실패입니다.
-
-## 7. 빌드·설치·실행
-
-명령은 **대상 Jetson Linux 터미널에서 저장소 루트를 기준으로** 실행합니다. 문서 작성 환경에서 커널 빌드·설치를 실행한 결과는 아닙니다.
-
-### 7.1 환경 준비
+## 테스트와 검증
 
 ```bash
-git clone --branch dev/kjh --single-branch \
-    https://github.com/Kyuhyeon34/linux_driver_project.git
-cd linux_driver_project
-git rev-parse HEAD
-uname -r
-cat /etc/nv_tegra_release
-tr '\0' '\n' < /proc/device-tree/compatible
-
-sudo apt update
-sudo apt install build-essential device-tree-compiler gpiod i2c-tools \
-    nvidia-l4t-kernel-headers
-ls -ld "/lib/modules/$(uname -r)/build"
-```
-
-문서 재현 기준은 상단 커밋입니다. 브랜치 HEAD 변경 시 차이를 확인합니다. 실행 커널과 헤더 버전을 맞추고 저장소에 포함된 .ko와 실행 바이너리는 재빌드합니다.
-
-### 7.2 빌드
-
-```bash
-make -C drivers/bmp180
-make -C drivers/ec11
-make -C drivers/ledbar
-make -C drivers/dc_motor modules
-make -C drivers/dc_motor apptest APP_CC=cc
-
-make -C Application
 make -C Testbench
 make -C Testbench sim
 ```
 
-모터 Makefile의 all은 apptest도 만들고 기본 APP_CC=aarch64-linux-gnu-gcc입니다. 네이티브 Jetson에서는 APP_CC=cc를 지정합니다. Application은 ledbar_ctrl.c를 함께 빌드하고 -lm을 링크합니다.
+**단독 테스트 실행 순서** · `fan_app`을 종료한 뒤 단독 테스트를 하나씩 실행합니다. 시험 프로그램을 종료한 뒤 `fan_app`을 다시 실행합니다. EC11 장치를 열면 공유 이벤트 큐가 비워지고, 둘 이상의 프로세스가 읽으면 이벤트를 나눠 소비할 수 있습니다. 모터 시험 앱이 `/dev/mydev`를 닫으면 드라이버가 모터 정지를 요청합니다. [EC11 큐 처리](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/drivers/ec11/ec11.c#L276) · [모터 close 처리](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/drivers/dc_motor/motor.c#L324)
 
-교차 빌드는 호스트의 uname -r 헤더가 아닌 대상 Jetson 커널 build tree, ARCH, toolchain을 지정해야 합니다. 해당 환경은 이 문서에서 검증하지 않았습니다.
+| 검증 대상 | 명령 또는 조작 | 기대 결과 |
+| --- | --- | --- |
+| LED 예제의 온도 변환 | `./Testbench/ledbar_test temp 25` | 예제 규칙에서 25.0 °C에 3칸 출력. 장치 없이 확인 가능 |
+| EC11 이벤트 | `sudo ./Testbench/ec11_test E` | 회전·클릭·길게 누르기 이벤트 출력 |
+| LED GPIO 출력 | `sudo ./Testbench/ledbar_test level 4` | 실제 LED 바 아래부터 4칸 점등. 확인 후 `sudo ./Testbench/ledbar_test off` |
+| 통합 앱과 같은 LED 표시 정책 | `sudo ./Testbench/fan_led_sim` | 모의 온도·다이얼 입력으로 실제 `/dev/ledbar` 출력 변화 확인 |
+| EC11·LED 연동 시험 | `sudo ./Testbench/fan_ctrl -n` | `/dev/ec11`로 상태·듀티 표시를 확인하고, `/dev/ledbar`가 있으면 LED 바 동작도 확인합니다. `-n`은 별도 모드 LED를 끕니다. [`ops_set_pwm()`](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/Testbench/fan_ctrl.c#L100-L104)는 TODO 상태이므로 모터 출력은 아래 시험에서 확인합니다. |
+| 실제 모터 제어 | [모터 PWM 시험](#모터-pwm-시험)의 `apptest` 또는 통합 앱 `fan_app` | PWM 출력, 모터 회전 및 장치 종료 후 정지를 확인합니다. |
+| 전체 모드 전환 | 앱 실행 후 클릭 → 다이얼 회전 → 클릭 → 길게 누르기 | `WAIT → MANUAL → AUTO → WAIT`. 수동 듀티 변경, 자동 모드 온도·듀티 출력, 대기 진입 후 정지 확인 |
 
-### 7.3 pinmux와 DTBO 생성
+### 모터 PWM 시험
 
-BMP180 I2C, 33번 PWM5, EC11 입력 GPIO, 방향·LED 출력 GPIO를 올바른 기능으로 설정합니다. LED 핀의 SPI/I2S 중복 사용을 확인합니다.
-
-```bash
-sudo /opt/nvidia/jetson-io/jetson-io.py
-```
-
-Jetson-IO는 개발 보드의 헤더 설정을 DTB에 반영하고 재부팅 후 적용합니다. [NVIDIA 헤더 설정 문서](https://docs.nvidia.com/jetson/archives/r36.4.3/DeveloperGuide/HR/ConfiguringTheJetsonExpansionHeaders.html)
-
-```bash
-dtc -@ -I dts -O dtb \
-    -o drivers/bmp180/bmp180.dtbo drivers/bmp180/bmp180-overlay.dts
-dtc -@ -I dts -O dtb \
-    -o drivers/ec11/ec11.dtbo drivers/ec11/ec11-overlay.dts
-dtc -@ -I dts -O dtb \
-    -o drivers/dc_motor/motor.dtbo drivers/dc_motor/motor-overlay.dts
-
-# 현재 super compatible을 가진 simple 버전, 별도 pinmux 확인 필요
-dtc -@ -I dts -O dtb \
-    -o drivers/ledbar/ledbar.dtbo drivers/ledbar/ledbar-simple-overlay.dts
-
-# full 버전을 사용할 때는 보드 compatible 확인. 두 버전 동시 적용 금지
-dtc -@ -I dts -O dtb \
-    -o drivers/ledbar/ledbar-full.dtbo drivers/ledbar/ledbar-overlay.dts
-```
-
-make -C drivers/ledbar dtbo는 **full** 버전을 ledbar.dtbo로 만듭니다. 위 simple 산출물과 이름이 같으므로 혼동하지 않습니다.
-
-dtc -@는 심볼 fixup을 생성하지만 base DTB에 gpio/pwm5, full 버전의 pinmux 참조 심볼이 있어야 적용됩니다. BMP180 target-path도 실제 DT와 대조합니다.
-
-### 7.4 DTBO 설치·부팅 적용
+최종 Device Tree 설정에서 모터 드라이버가 연결되고 `/dev/mydev`가 생성된 상태로 진행합니다. `fan_app`을 종료한 뒤 각 입력을 독립적으로 시험합니다.
 
 ```bash
-sudo install -m 0644 drivers/bmp180/bmp180.dtbo /boot/bmp180.dtbo
-sudo install -m 0644 drivers/ec11/ec11.dtbo /boot/ec11.dtbo
-sudo install -m 0644 drivers/dc_motor/motor.dtbo /boot/motor.dtbo
-sudo install -m 0644 drivers/ledbar/ledbar.dtbo /boot/ledbar.dtbo
-
-sudo cp -a /boot/extlinux/extlinux.conf \
-    "/boot/extlinux/extlinux.conf.bak.$(date +%Y%m%d-%H%M%S)"
-sudo nano /boot/extlinux/extlinux.conf
+ls -l /sys/bus/platform/devices/motor/driver /dev/mydev
+make -C drivers/dc_motor apptest APP_CC=cc
+for duty in 0 40 70 100; do
+    sudo ./drivers/dc_motor/apptest "$duty" || break
+done
 ```
 
-실제 선택되는 LABEL 아래 기존 설정·pinmux 오버레이를 보존하고 필요한 파일을 합칩니다. R36 ExtLinux 구성 예시이며 **실기 성공 기록은 아닙니다.**
+0%는 즉시 종료됩니다. 나머지 입력에서는 Enter를 누르기 전에 헤더 **33번 PWM**을 측정하고 회전을 관찰합니다. Enter를 누른 뒤 장치가 닫히고 팬이 정지하는지도 확인합니다. 아래 수치는 드라이버의 1 ms 주기 설정에서 계산한 **기대값**입니다. [PWM 설정과 정지 코드](drivers/dc_motor/motor.c) · [PWM5 설정](drivers/dc_motor/motor-overlay.dts)
 
-```text
-    OVERLAYS /boot/bmp180.dtbo,/boot/ec11.dtbo,/boot/motor.dtbo,/boot/ledbar.dtbo
-```
+| 요청 듀티 | 헤더 33번에서 확인할 기대 동작 | 모터 판정 |
+| --- | --- | --- |
+| 0% | PWM 비활성화 요청 후 구동 펄스 정지 확인 | 정지 |
+| 40% | 주기 약 1 ms, 활성 구간 약 0.40 ms | 실제 회전 및 최소 듀티에서 기동 가능한지 확인 |
+| 70% | 주기 약 1 ms, 활성 구간 약 0.70 ms | 실제 회전 확인 |
+| 100% | 활성 상태 연속 출력 확인 | 실제 회전 확인 |
+| Enter로 종료 | 장치가 닫힌 뒤 구동 펄스 정지 확인 | 정지 |
 
-FDT가 지정되어 있으면 base DTB가 대상 보드용인지 확인합니다. 기존 Jetson-IO 설정을 덮어쓰지 않습니다. R36 OVERLAYS 사용은 [NVIDIA 개발자 포럼 사례](https://forums.developer.nvidia.com/t/enable-camera-sensor-connected-to-i2c-mux/294252)를 참고합니다. 오래된 U-Boot 문서의 FDTOVERLAYS 설정과 릴리스 확인 없이 섞지 않습니다.
+| 날짜·커밋 | Jetson Linux·커널 | 입력 | 측정 주기·활성 시간 또는 출력 상태 | 회전·정지 | 로그·파형 및 판정 |
+| --- | --- | --- | --- | --- | --- |
+| 미기록 | 미기록 | 0 / 40 / 70 / 100% 및 종료 | 측정 대기 | 확인 대기 | 실기 미검증 |
+
+### BMP180 실기 확인과 경계값 시험
+
+드라이버 로드 후 `sudo dmesg | grep -i bmp180`으로 등록 메시지를 확인하고, [IIO 확인 단계](#3-모듈-로드와-인터페이스-확인)에서 장치 이름과 온도·기압 읽기 결과를 함께 기록합니다. 앱 연동을 확인할 때는 같은 실행에서 `AUTO` 모드의 온도와 듀티 로그를 대조합니다.
+
+| 입력 또는 조건 | 코드상 기대 동작 |
+| --- | --- |
+| AUTO가 꺼진 상태에서 21 → 22 → 21 °C | 듀티 0% → 40% → 40% |
+| 팬이 켜진 상태에서 20 °C와 20 °C 미만 | 20 °C에서 40% 유지, 20 °C 미만에서 0% |
+| 운전 중 센서 읽기 실패 후 정상 읽기 복구 | 실패 로그와 0% 듀티 요청 확인. 복구 후 22 °C 이상에서 기동 |
+
+입력 온도를 제어하거나 읽기 실패를 재현할 수 있는 시험 환경에서 위 조건을 적용합니다. 표의 값은 코드에 따른 기대 동작입니다.
+
+| 검증 구분 | 이번 문서의 확인 범위 |
+| --- | --- |
+| 실행 확인 · 빌드 명령 드라이런 | 기준 커밋의 앱·테스트·LED full DTBO Makefile에서 GNU Make의 `-n`으로 호출 명령과 산출물 이름을 확인했습니다. |
+| 소스·설정 확인 | Device Tree 매칭, IIO 채널·단위, ioctl 명령, 모드 전환·온도 임계값, Makefile 타깃을 기준 커밋과 대조했습니다. |
+| 기존 실행 기록 · LED 출력 성공 | 기존 Jetson Linux R36.5 / Linux 5.15 환경에서 `Jetson-IO + nodt=1` 경로로 LED 출력이 동작한 기록이 있습니다. [기존 LED 시험 기록](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/README.md#L469-L514) |
+| 기존 실패 기록 · LED DT 적용 | 오버레이 적용 후 `/proc/device-tree/ledbar`가 생성되지 않았습니다. 최종 DT 적용 실패의 원인은 미확인입니다. [기존 검증 표](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/README.md#L495-L514) |
+| 실기 확인 필요 | 기준 커밋의 BMP180 IIO 등록·읽기, 최종 DT 바인딩, 모터 PWM·회전·정지, 네 장치 동시 동작, 경계값·오류 복구 시험 |
+
+### 일반 문제 해결
+
+- **모듈을 로드할 수 없을 때** — `uname -r`과 `modinfo -F vermagic <모듈 경로>`를 대조합니다. `insmod` 오류의 세부 원인은 `sudo dmesg | tail -n 60`에서 확인합니다.
+- **모듈 로드 후 장치가 없을 때** — 부팅 항목의 오버레이 경로와 보드 `compatible`을 확인하고, 커널 로그에서 드라이버의 `probe` 메시지를 확인합니다. 모터 PWM이 출력되지 않거나 LED가 켜지지 않으면 헤더 핀의 `pinmux`도 확인합니다.
+- **앱에서 온도를 못 읽을 때** — `bmp180_custom` 등록 여부, `in_temp_input` 읽기 결과, 앱에 설정된 `TEMP_PATH` 순서로 확인합니다.
+
+### 트러블슈팅 사례
+
+#### GPIO를 제어해도 LED가 켜지지 않았던 문제
+
+팀은 Jetson Linux R36.5에서 핀 설정을 조회해 LED용 헤더 핀이 `tristate` 상태여서 출력이 꺼져 있는 것을 확인했습니다. Jetson-IO에서 해당 헤더 핀을 GPIO로 설정했고, `nodt=1` 대체 경로에서 LED가 동작한 기록을 남겼습니다. `nodt=1`은 드라이버가 GPIO 라인 번호로 테스트 장치를 직접 만드는 방식입니다. [LED full DTS의 핀 설정 기록](drivers/ledbar/ledbar-overlay.dts) · [기존 시험 기록](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/README.md#L469-L514)
+
+같은 증상을 진단할 때는 대상 커널에서 `pinconf-groups` 위치를 확인하고 LED 핀의 `tristate` 설정을 조회합니다. 아래 경로는 기존 R36.5 환경의 조회 예입니다.
 
 ```bash
-sudo reboot
-
-# 재부팅 후 실행 중인 DT 확인
-test -d /proc/device-tree/bus@0/i2c@c250000/bmp180@77
-test -d /proc/device-tree/ec11
-test -d /proc/device-tree/motor
-test -d /proc/device-tree/ledbar
-
-tr '\0' '\n' < /proc/device-tree/bus@0/i2c@c250000/bmp180@77/compatible
-tr '\0' '\n' < /proc/device-tree/ec11/compatible
-tr '\0' '\n' < /proc/device-tree/motor/compatible
-tr '\0' '\n' < /proc/device-tree/ledbar/compatible
-sudo dtc -I fs -O dts -o /tmp/smartfan-running.dts /proc/device-tree
+sudo grep -A4 -E 'soc_gpio41_ph7|spi3_sck_py0' \
+    /sys/kernel/debug/pinctrl/2430000.pinmux/pinconf-groups
 ```
 
-파일 복사만으로 적용 성공을 판정하지 않습니다. DT 노드 → compatible → 바인딩 → 인터페이스 → 실제 신호 순서로 확인합니다.
-
-### 7.5 모듈 설치·depmod·로드
+대체 경로를 시험하려면 앱을 종료하고 DT 기반 LED 장치를 적용하지 않은 부팅 구성에서 진행합니다. Jetson-IO의 GPIO 설정을 적용한 뒤 `gpiodetect`와 `gpioinfo`로 칩과 라인 번호를 확인합니다. 이미 `ledbar` 모듈을 로드했다면 `sudo rmmod ledbar`로 해제한 뒤 아래 명령을 실행합니다. 기본 `chip`·`lines`와 실제 배선이 맞는지 확인합니다. [드라이버의 모듈 매개변수](drivers/ledbar/ledbar.c)
 
 ```bash
-sudo install -d "/lib/modules/$(uname -r)/extra"
-sudo install -m 0644 drivers/bmp180/bmp180.ko \
-    drivers/ec11/ec11.ko drivers/dc_motor/motor.ko \
-    drivers/ledbar/ledbar.ko "/lib/modules/$(uname -r)/extra/"
-sudo depmod -a "$(uname -r)"
-
-sudo modprobe bmp180
-sudo modprobe ec11 long_press_ms=2000
-sudo modprobe motor
-sudo modprobe ledbar
-
-lsmod | grep -E 'bmp180|ec11|motor|ledbar'
-ls -l /dev/ec11 /dev/mydev /dev/ledbar
-sudo dmesg | tail -n 100
-cat /sys/module/ec11/parameters/long_press_ms
+sudo insmod drivers/ledbar/ledbar.ko nodt=1
+sudo ./Testbench/ledbar_test level 4
+sudo ./Testbench/ledbar_test off
 ```
 
-depmod는 의존성·별칭 정보를 갱신하며 DT 노드나 pinmux를 설정하지 않습니다. 현재 EC11·모터는 DT 없이 모듈만 로드하면 장치가 생성되지 않을 수 있습니다. 동적 장치 번호를 사용하므로 과거 모터 코드의 major 120을 따라 mknod하지 않습니다.
+별도의 DT 적용 시도에서는 `/proc/device-tree/ledbar`가 생성되지 않았습니다. **최종 DT 적용 실패의 원인은 미확인**입니다. 재시험할 때 [오버레이 선택과 적용](#2-device-tree-오버레이-적용)과 [DT 바인딩 확인](#3-모듈-로드와-인터페이스-확인) 순서로 점검합니다.
 
-재부팅·자동 로드에서도 2초를 고정하려면:
+#### 온도 경계에서 LED 칸 수가 반복해서 바뀌는 현상
+
+- **문제** — 팀 통합 중 자동 모드에서 온도가 표시 단계의 경계값을 오갈 때 LED가 인접한 두 칸 수 사이에서 반복 전환됐습니다.
+- **원인** — 상승과 하강에 같은 경계값을 적용하면 작은 온도 변화에도 표시 단계가 바뀝니다.
+- **해결** — [`ledbar_temp_to_level()`](drivers/ledbar/ledbar_ctrl.c)에 ±0.2 °C 히스테리시스를 적용했습니다. 직전 표시 단계를 기억하고, 상승할 때와 하강할 때 서로 다른 온도에서 표시를 바꾸도록 했습니다.
+- **검증 방법** — LED 바가 연결된 Jetson에서 `sudo ./Testbench/fan_led_sim`을 실행합니다. [테스트 코드](Testbench/fan_led_sim.c)가 입력 온도를 올렸다 내릴 때, 같은 두 표시 단계 사이의 전환 온도가 방향에 따라 달라지는지 출력 로그로 확인합니다. 3칸과 4칸의 기준 경계인 24 °C를 예로 들면, 코드상 3→4칸은 약 24.2 °C 이상, 4→3칸은 약 23.8 °C 미만에서 전환됩니다.
+
+## 알려진 제약과 코드 개선점
+
+| 현재 동작 | 영향 및 개선 방향 |
+| --- | --- |
+| [`TEMP_PATH`](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/Application/fan_app.h#L29)가 `iio:device0`을 고정해서 읽습니다. | 같은 속성을 제공하는 다른 센서가 먼저 등록되면 앱이 그 센서의 온도를 사용할 수 있습니다. 실행 시 IIO 장치 이름으로 `bmp180_custom`을 찾아 경로를 결정하고, 장치를 찾을 수 없는 경우를 처리하는 것이 개선 과제입니다. |
+| [앱 실행 중 오류 경로](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/Application/fan_app.c#L385)가 정리 코드로 이어진 뒤 `EXIT_SUCCESS`를 반환할 수 있습니다. | 외부 스크립트가 정상 종료와 장치 오류를 구분하기 어렵습니다. 모터 정지와 장치 정리를 공통으로 수행하고, 종료 원인에 맞는 반환값을 전달하는 것이 개선 과제입니다. |
+
+## 요소기술
+
+이 절은 운영체제와 드라이버를 처음 배우는 독자를 위한 설명입니다. 먼저 앱·커널·장치의 관계를 보고, 이어서 센서 읽기와 모터 제어가 어떻게 연결되는지 따라갑니다.
+
+### 1. Linux 커널
+
+커널은 프로그램이 CPU, 메모리, 장치 같은 컴퓨터 자원을 사용할 수 있도록 관리하는 운영체제의 핵심입니다. 장치마다 레지스터와 연결 방식이 다르므로, 커널 안의 **드라이버**가 장치별 동작을 맡습니다. Smart Fan의 앱은 온도를 읽고 듀티를 결정하며, 드라이버는 센서와 모터를 실제로 제어합니다.
+
+```mermaid
+flowchart TD
+    subgraph U["사용자 공간"]
+        APP["fan_app · 온도 읽기와 듀티 계산"]
+    end
+    subgraph K["Linux 커널 공간"]
+        SENSOR["IIO와 BMP180 드라이버"]
+        MOTOR["모터 드라이버와 PWM 서브시스템"]
+    end
+    subgraph H["하드웨어"]
+        BMP["BMP180 센서"]
+        PWM["PWM 컨트롤러와 모터 구동 회로"]
+    end
+    APP -->|"sysfs 읽기 요청"| SENSOR
+    SENSOR -->|"보정 온도 반환"| APP
+    APP -->|"ioctl 듀티 설정 요청"| MOTOR
+    SENSOR <-->|"I²C 명령과 측정값"| BMP
+    MOTOR -->|"PWM 출력 설정"| PWM
+```
+
+*그림 1. Smart Fan에서 앱의 요청이 커널을 거쳐 하드웨어에 도달하는 경로입니다.*
+
+예를 들어 앱이 온도 파일을 읽으면, 커널의 IIO 계층을 거쳐 BMP180 드라이버가 호출됩니다. 이 드라이버는 `.ko` 커널 모듈로 빌드됩니다. `insmod`는 모듈을 커널에 로드하며, 장치와 드라이버가 연결되면 `probe()`가 장치 초기화를 시도합니다. Jetson에서 `sudo dmesg | grep -i bmp180`으로 초기화 메시지를 확인할 수 있습니다. [BMP180 드라이버](drivers/bmp180/bmp180.c) · [Linux 외부 모듈 문서](https://docs.kernel.org/kbuild/modules.html)
+
+### 2. User Space와 Kernel Space
+
+**사용자 공간**은 앱이 실행되는 영역이고, **커널 공간**은 커널과 드라이버가 실행되는 영역입니다. 두 공간을 나누면 앱은 파일 읽기나 `ioctl()` 같은 정해진 인터페이스로 장치를 요청하고, 커널은 장치 접근을 관리할 수 있습니다. **[그림 1](#1-linux-커널)**에서 위쪽 앱의 요청이 가운데 커널로 내려가는 두 화살표를 따라가면 됩니다.
+
+| 같은 팬 제어 과정에서 | 하는 일 |
+| --- | --- |
+| 사용자 공간의 `fan_app` | 온도와 모드를 읽고 목표 듀티를 계산합니다. |
+| 커널 공간의 모터 드라이버 | 전달받은 듀티의 범위를 확인하고 PWM 컨트롤러에 적용합니다. |
+
+예를 들어 `AUTO`에서 센서 입력이 27 °C라면 앱은 제어식으로 70% 듀티를 계산합니다. 이 값은 **코드 계산 예시**입니다. 앱 로그에서 온도·목표 듀티를 보고, 실제 PWM 출력은 보드 시험에서 따로 확인합니다. [앱 구현](Application/fan_app.c) · [모터 드라이버](drivers/dc_motor/motor.c)
+
+### 3. Device Tree
+
+Device Tree는 **보드에 어떤 장치가 어디에 연결돼 있는지** 커널에 전달하는 데이터입니다. 같은 드라이버라도 보드마다 버스와 핀 배치가 달라질 수 있습니다. 오버레이는 기본 Device Tree에 프로젝트 장치 정보를 추가하는 파일이며, 사람이 읽는 `.dts`를 `dtc`로 컴파일하면 `.dtbo`가 됩니다.
+
+```mermaid
+flowchart TD
+    BASE["Jetson 기본 Device Tree"]
+    OVL["BMP180 오버레이"]
+    BUS["실행 중인 Device Tree · I²C 컨트롤러"]
+    NODE["bmp180@77 · reg 0x77"]
+    DRV["BMP180 드라이버 · probe"]
+    BASE -->|"기본 보드 정보"| BUS
+    OVL -->|"센서 노드 추가"| BUS
+    BUS -->|"I²C 자식 노드"| NODE
+    NODE -->|"compatible 값으로 매칭"| DRV
+```
+
+*그림 2. 오버레이에서 센서를 선언하고, 커널이 장치와 드라이버를 연결하는 흐름입니다.*
+
+1. 오버레이는 `/bus@0/i2c@c250000` 아래에 `bmp180@77`을 추가합니다.
+2. `reg = <0x77>`은 해당 I²C 버스에서 센서에 접근할 주소입니다. `compatible = "custom,bmp180"`은 드라이버의 매칭 표와 비교할 이름입니다.
+3. 오버레이 루트의 `compatible`은 적용 대상 보드를 기술합니다. 자식 노드의 `compatible`은 연결할 장치 드라이버를 식별합니다.
+
+보드에서는 `ls -d /proc/device-tree/bus@0/i2c@c250000/bmp180@77`로 적용된 노드를 찾고, 모듈을 로드한 뒤 `dmesg`에서 장치 초기화 결과를 확인합니다. [BMP180 오버레이](drivers/bmp180/bmp180-overlay.dts) · [드라이버 매칭 표](drivers/bmp180/bmp180.c) · [Linux Device Tree 문서](https://docs.kernel.org/devicetree/usage-model.html)
+
+### 4. IIO
+
+IIO(Industrial I/O)는 센서가 측정한 값을 Linux에서 공통된 방식으로 제공하는 커널 기능입니다. 앱이 직접 센서 레지스터를 읽는 절차를 작성할 필요가 없도록, 드라이버가 온도·기압 채널을 등록하고 IIO가 `sysfs`에 읽을 수 있는 속성을 만듭니다. `sysfs`는 커널이 장치의 정보를 파일처럼 보여주는 인터페이스입니다.
+
+```mermaid
+sequenceDiagram
+    participant A as fan_app
+    participant I as IIO sysfs
+    participant D as BMP180 드라이버
+    participant S as BMP180 센서
+    A->>I: 1. in_temp_input 읽기
+    I->>D: 2. 보정값 읽기 콜백 호출
+    D->>S: 3. I²C로 온도 변환 요청
+    Note over D,S: 온도 변환 대기 요청 5~6 ms
+    D->>S: 4. 결과 레지스터 읽기
+    S-->>D: 온도 원시값
+    Note over D: 센서에 저장된 계수로 온도 보정
+    D-->>I: 보정 온도 m°C
+    I-->>A: 5. 온도 문자열
+```
+
+*그림 3. AUTO에서 온도 속성을 한 번 읽을 때의 흐름입니다. 대기 시간은 코드의 `usleep_range(5000, 6000)` 설정입니다.*
+
+- `bmp180_probe()`는 칩 ID를 확인하고, 센서에 저장된 보정 계수를 읽고, 온도·기압 채널을 등록합니다.
+- `bmp180_iio_read_raw()`는 파일을 읽을 때 실행됩니다. 이름에 `raw`가 들어 있으며, 이 프로젝트에서 사용하는 요청 종류는 `IIO_CHAN_INFO_PROCESSED`입니다. 드라이버가 보정한 값을 반환합니다.
+- 온도는 `in_temp_input`에서 m°C 단위로, 기압은 `in_pressure_input`에서 kPa 단위로 읽습니다. 온도 파일의 `25000`은 **25.0 °C에 해당하는 값의 예시**입니다. 실제 값은 [IIO 장치 확인 명령](#3-모듈-로드와-인터페이스-확인)으로 읽을 수 있습니다. [BMP180 구현](drivers/bmp180/bmp180.c) · [Linux IIO 문서](https://docs.kernel.org/driver-api/iio/core.html)
+
+### 5. ioctl
+
+`ioctl()`은 앱이 이미 열어 둔 장치 파일을 통해 **장치별 제어 명령과 인수**를 커널에 전달하는 시스템 호출입니다. 이 프로젝트에서는 장치 경로와 제어할 값이 정해져 있습니다. `/dev/mydev`를 열어 얻은 파일 디스크립터는 앱이 그 장치를 다시 가리킬 때 사용하는 번호입니다.
+
+```mermaid
+sequenceDiagram
+    participant A as fan_app
+    participant K as Linux 파일 인터페이스
+    participant D as 커널 모터 드라이버
+    participant P as PWM 컨트롤러
+    A->>K: 1. /dev/mydev 열기
+    K->>D: 장치 열기 처리 요청
+    K-->>A: 파일 디스크립터 반환
+    A->>K: 2. ioctl로 명령과 듀티 전달
+    K->>D: 드라이버의 ioctl 처리 함수 호출
+    Note over D: 3. 사용자 메모리에서 값 복사 후 0~100 범위 확인
+    D->>P: 4. PWM 상태 적용
+    D-->>K: 성공 또는 오류
+    K-->>A: 호출 결과 반환
+```
+
+*그림 4. 듀티 제어 요청이 장치 드라이버에 전달되는 순서입니다.*
+
+```c
+__u32 duty = 70;
+ioctl(fd, MY_IOCTL_CMD_SET_PWM, &duty);
+```
+
+위 코드는 요청 형태를 보여주는 예시입니다. 실제 앱은 `motor_set_duty()`에서 반환값도 확인합니다. 앱과 드라이버는 같은 헤더의 `MY_IOCTL_CMD_SET_PWM`을 사용하고, 드라이버의 `device_ioctl()`이 사용자 메모리에서 값을 복사한 뒤 PWM 상태를 설정합니다. 70%는 한 PWM 주기 중 활성 구간이 70%라는 뜻입니다. 보드에서는 앱을 종료하고 `apptest`로 요청한 듀티의 메시지와 PWM 출력을 확인합니다. [모터 명령 헤더](drivers/dc_motor/motor_ioctl.h) · [모터 드라이버](drivers/dc_motor/motor.c) · [Linux ioctl 문서](https://docs.kernel.org/driver-api/ioctl.html)
+
+### 6. Mutex
+
+Mutex(뮤텍스)는 **공유 자원을 사용하는 구간에 한 번에 한 작업만 들어가도록 하는 잠금**입니다. BMP180은 여러 요청이 같은 센서의 제어·결과 레지스터를 공유합니다. 첫 요청이 변환을 기다리는 동안 다른 요청이 새 변환을 시작하면, 첫 요청이 기대한 명령과 결과의 순서를 보장하기 어려워집니다.
+
+```mermaid
+sequenceDiagram
+    participant A as 요청 A · 온도 읽기
+    participant M as 드라이버의 뮤텍스
+    participant B as 요청 B · 기압 읽기
+    A->>M: 1. 잠금 획득
+    Note over A,M: A가 변환 요청 후 대기
+    B->>M: 2. 잠금 요청
+    Note over M,B: A가 잠금을 해제할 때까지 B는 대기
+    Note over A,M: A가 결과를 읽고 보정
+    A->>M: 3. 잠금 해제
+    M-->>B: 4. B가 잠금 획득
+    Note over M,B: B가 온도 중간값과 기압을 측정하고 보정
+    B->>M: 잠금 해제
+```
+
+*그림 5. 두 요청이 겹칠 때의 순서를 설명한 개념도입니다. 보드의 실측 타임라인은 실기 시험에서 확인합니다.*
+
+코드에서 `mutex_lock(&data->lock)`은 첫 온도 변환 전에 호출됩니다. 기압 요청에서는 온도 보정의 중간값을 구하는 단계까지 포함하고, `out_unlock`에서 성공·오류 경로가 모두 잠금을 해제합니다. 코드에서 `goto out_unlock`과 `mutex_unlock()`을 따라가면 잠금이 언제 풀리는지 확인할 수 있습니다. [BMP180 측정 코드](drivers/bmp180/bmp180.c) · [Linux Mutex 문서](https://docs.kernel.org/locking/mutex-design.html)
+
+### 7. Makefile
+
+Makefile은 **무엇을 만들고, 어떤 파일이 필요하며, 어떤 명령을 실행할지** 적은 빌드 규칙입니다. `make -C`의 `-C`는 지정한 디렉터리로 이동해 그곳의 규칙을 실행하라는 옵션입니다. 이 프로젝트는 커널에 로드할 모듈과 사용자가 실행할 앱을 각각 빌드합니다.
+
+```mermaid
+flowchart TD
+    DS["드라이버 C 소스 · 헤더 · Makefile"]
+    KB["Kbuild · Linux 커널 빌드 규칙"]
+    KO["bmp180.ko · 커널 모듈"]
+    AS["앱 C 소스 · 헤더 · Makefile"]
+    CC["C 컴파일과 링크"]
+    APP["fan_app · 사용자 앱"]
+    DS -->|"make -C drivers/bmp180"| KB
+    KB -->|"모듈 생성"| KO
+    AS -->|"make -C Application"| CC
+    CC -->|"실행 파일 생성"| APP
+```
+
+*그림 6. 커널 모듈과 사용자 앱의 빌드 경로입니다.*
+
+- BMP180 Makefile의 `obj-m += bmp180.o`는 외부 모듈의 빌드 대상을 지정합니다. 모듈 빌드에 필요한 커널 헤더는 대상 보드의 실행 커널과 맞춰야 합니다.
+- 앱 Makefile의 `SRCS`는 `fan_app.c`와 `ledbar_ctrl.c`를 지정하고, `HEADERS`는 변경을 추적할 헤더를 나열합니다. 컴파일·링크 후 `Application/fan_app`이 생성됩니다.
+- 아래는 저장소 루트에서 실행하는 확인 예시입니다. `-n`은 호출할 빌드 명령을 살펴보는 드라이런 옵션입니다. 실제 산출물은 [빌드 절차](#빌드-및-실행)를 수행한 뒤 확인합니다. [BMP180 Makefile](drivers/bmp180/Makefile) · [앱 Makefile](Application/Makefile) · [Linux Kbuild 문서](https://docs.kernel.org/kbuild/modules.html)
 
 ```bash
-printf 'options ec11 long_press_ms=2000\n' | \
-    sudo tee /etc/modprobe.d/smartfan-ec11.conf
+make -n -C Application
+make -n -C Testbench
 ```
 
-이미 로드된 값은 modprobe 재실행만으로 바뀌지 않습니다. 현재 파라미터는 쓰기 가능하므로 앱을 멈추고 노브를 누르지 않은 상태에서 수정할 수 있습니다.
+## 코드 탐색
 
-```bash
-printf '2000\n' | sudo tee /sys/module/ec11/parameters/long_press_ms
-```
+| 처음 볼 코드 | 확인할 내용 |
+| --- | --- |
+| [`fan_app` 진입점](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/Application/fan_app.c#L294) · [설정 헤더](Application/fan_app.h) | 장치 열기, 이벤트 처리, 자동 모드 온도 읽기 |
+| [`bmp180_probe()`](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/drivers/bmp180/bmp180.c#L635) · [`bmp180_iio_read_raw()`](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/drivers/bmp180/bmp180.c#L485) | 장치 초기화, IIO 등록, 측정과 보정 |
+| [모터 ioctl 처리](https://github.com/kobokdong/Thermal_Fan_Driver/blob/1c76e6f1a0d9e915cf661714f6876eab51e2cbd6/drivers/dc_motor/motor.c#L212) · [공유 헤더](drivers/dc_motor/motor_ioctl.h) | 앱이 전달한 듀티의 검증과 PWM 설정 |
+| [`Testbench/`](Testbench/) | EC11·LED 바 개별 테스트와 LED 모드 시뮬레이션 |
 
-### 7.6 LED nodt 대체 시험
-
-기존 LED README에는 DT 적용 후 /proc/device-tree/ledbar가 생성되지 않았고 **Jetson-IO + nodt=1로 동작했다는 기록**이 있습니다.
-
-```bash
-# 앱 종료 후, DT LED 장치와 중복 사용하지 않음
-sudo modprobe -r ledbar
-sudo modprobe ledbar nodt=1
-# 설치 전 직접 로드:
-# sudo insmod drivers/ledbar/ledbar.ko nodt=1
-```
-
-이 경로를 사용한 결과를 LED DT 통합 성공으로 기록하지 않습니다. full compatible 불일치는 조사 후보이며 기존 실패의 확정 원인은 아닙니다.
-
-### 7.7 앱 실행
-
-```bash
-sudo ./Application/fan_app
-sudo ./Application/fan_app -s 5
-sudo ./Application/fan_app -r
-```
-
--s는 1~100% 회전 단위, -r은 앱 반전 토글입니다. WAIT로 시작하며 Ctrl+C로 종료합니다. fan_app, fan_ctrl, ec11_test를 동시에 실행하지 않습니다.
-
-## 8. 테스트 명령·결과·검증 상태
-
-### 8.1 판정 기준과 현재 결과
-
-- **확인 — 소스:** 기준 커밋의 구현·설정을 직접 확인. 실행 성공을 뜻하지 않음.
-- **기록 있음 — 기존 문서:** 저장소의 동작·실측 기록. 이번에 재실행하지 않음.
-- **대기 — 실기:** 대상 보드 로그·측정 결과가 없어 성공 판정 보류.
-- **문제 기록:** 기존 문서에 실패가 있으며 해결 여부 미확인.
-
-| 항목 | 상태 | 근거 / 결과 |
-|---|---|---|
-| 네 드라이버 compatible·DT 자원 | 확인 — 소스 | DTS와 매칭 테이블 확인 |
-| WAIT/AUTO/MANUAL·온도 계산식 | 확인 — 소스 | fan_app.c/.h 활성 코드 |
-| EC11 2초 기본값 | 확인 — 소스 | long_press_ms=2000. 기존 3초 문서와 충돌 |
-| LED nodt 출력 | 기록 있음 — 기존 문서 | Jetson-IO + nodt 동작 기록 |
-| LED tristate/open-drain 문제 | 기록 있음 — 기존 문서 | LED DTS 주석의 R36.5 실측 설명 |
-| LED full DT 적용 | 문제 기록 | 기존 README: ledbar DT 노드 미생성, 원인 미확인 |
-| 현재 커밋 커널·앱 빌드 | 대기 — 실기 | 빌드 산출물 존재는 확인, 대상 환경 빌드 로그 없음 |
-| BMP180 DT probe·온도·기압 실측 | 대기 — 실기 | IIO 구현은 확인, 실측 로그 없음 |
-| EC11 DT 회전·클릭·2초 long-press | 대기 — 실기 | 시험 코드 존재, 현재 실기 로그 없음 |
-| 모터 최종 DT·PWM·회전·정지 | **대기 — 실기** | **최종 DT 기능 테스트 확인되지 않음** |
-| 네 장치 DT 동시 적용·fan_app | 대기 — 실기 | 전체 통합 완료를 입증하는 로그 없음 |
-
-이전 대화에서 DT 매칭, 배선, 빌드, 앱 실행, 아키텍처와 검증 결과를 정리하자는 요청을 확인했습니다. 이번 대화 조회는 상세 답변·측정 로그를 참조 표시로만 반환하여 실기 성공 근거로 사용하지 않았습니다. 이 문서 작성 환경에서는 대상 Jetson 커널 빌드나 하드웨어 시험을 실행하지 않았습니다.
-
-### 8.2 BMP180
-
-```bash
-i2cdetect -l
-readlink -f /sys/bus/i2c/devices/7-0077/driver
-sudo dmesg | grep -E 'BMP180|bmp180|Calibration'
-
-# 이름을 확인한 실제 IIO 번호로 수정
-cat /sys/bus/iio/devices/iio:device0/name
-cat /sys/bus/iio/devices/iio:device0/in_temp_input
-cat /sys/bus/iio/devices/iio:device0/in_pressure_input
-```
-
-예상 합격 조건: bmp180_custom 이름, chip ID·보정 로드·IIO 등록 로그, 온도 변화에 따른 갱신, 기준 센서와의 비교 기록.
-
-주소 검색이 필요한 미바인딩 상태에서는 sudo i2cdetect -y 7 0x77 0x77을 사용할 수 있습니다. UU는 커널 드라이버 점유를 뜻하며 chip ID 검증의 대체 결과가 아닙니다. 활성 드라이버와 동시에 직접 레지스터 접근을 하지 않습니다.
-
-### 8.3 EC11
-
-```bash
-cat /sys/module/ec11/parameters/long_press_ms
-sudo ./Testbench/ec11_test E
-# 모니터 종료 후 각각 실행
-sudo ./Testbench/ec11_test I GET
-sudo ./Testbench/ec11_test I RESET
-sudo ./Testbench/ec11_test I GET
-```
-
-예상 합격 조건: CW/CCW와 카운트 변화, RESET 후 0, 해제 시 CLICK 1회, 안정된 눌림부터 약 2초 후 LONG 1회, LONG 이후 CLICK 없음. debounce·스케줄링 때문에 2.000초의 정밀 타이밍이라고 주장하지 않습니다. 모듈 로드 시 노브를 디텐트에서 정지시킵니다.
-
-### 8.4 LED
-
-```bash
-sudo ./Testbench/ledbar_test demo
-printf '0\n' | sudo tee /dev/ledbar
-printf '8\n' | sudo tee /dev/ledbar
-printf 'p 0xA5\n' | sudo tee /dev/ledbar
-printf 'wave\n' | sudo tee /dev/ledbar
-cat /dev/ledbar
-sudo ./Testbench/fan_led_sim
-```
-
-예상 합격 조건: LED 순서, 0/8칸, 패턴 bit 순서, 애니메이션·복귀. 시뮬레이터는 표시 정책 시험이며 센서·모터 실제 통합의 증거가 아닙니다.
-
-### 8.5 모터 최종 DT 기능 시험 — 미확인
-
-```bash
-readlink -f /sys/bus/platform/devices/motor/driver
-ls -l /dev/mydev
-sudo dmesg | grep -E 'Motor|PWM|smartfan'
-sudo cat /sys/kernel/debug/pwm
-
-# 각각 독립 실행. Enter를 누르면 close를 통해 정지
-sudo ./drivers/dc_motor/apptest 0
-sudo ./drivers/dc_motor/apptest 40
-sudo ./drivers/dc_motor/apptest 70
-sudo ./drivers/dc_motor/apptest 100
-```
-
-앞으로 확인할 합격 조건:
-
-1. DT 노드가 smartfan-motor에 바인딩되고 /dev/mydev 생성.
-2. 헤더 33번에서 약 1ms(1kHz) 주기, 요청 duty와 실제 파형 일치.
-3. 운전 시 IN1=HIGH/IN2=LOW 및 실제 회전.
-4. duty 0, Enter/close, 모듈 제거 시 실제 출력 정지.
-5. 100 초과 입력 거부. PWM duty와 실제 RPM은 구분하여 기록.
-
-**이 절은 시험 절차이며 성공 결과가 아닙니다. 모터 최종 DT 기능 테스트는 여전히 대기입니다.**
-
-### 8.6 통합·오류 시험
-
-```bash
-sudo ./Application/fan_app -s 5
-```
-
-WAIT 0% → 클릭 MANUAL 0% → 회전 duty 증가 → 클릭 AUTO → 온도 기반 출력 → 2초 길게 누르기 WAIT → 클릭 이전 모드 복귀 → Ctrl+C 정지를 확인합니다.
-
-AUTO에서는 22°C 이상 ON, 20°C 미만 OFF를 실제 온도·직전 상태·duty와 함께 기록합니다. 센서 오류 시험은 계획된 환경에서 통신 실패를 유도하여 오류 로그, AUTO 0%, 복구 후 재측정을 확인합니다. 센서 sysfs 값을 일반 파일처럼 덮어쓰지 않습니다.
-
-코드의 일부 오류 루프 종료 경로는 최종 EXIT_SUCCESS를 반환하므로 종료 코드 0만으로 합격을 판정하지 않습니다.
-
-### 8.7 결과 기록 양식
-
-| 날짜 / 커밋 | JetPack·커널 | 항목 | 조건 | 실제 로그·파형 | 판정 |
-|---|---|---|---|---|---|
-| 미기록 | 미기록 | 모터 최종 DT | 0/40/70/100%, close 정지 | 미첨부 | 대기 |
-| 미기록 | 미기록 | 네 장치 DT 통합 | fan_app 상태 전환 | 미첨부 | 대기 |
-
-합격 갱신 시 실제 커밋, boot LABEL/DT, 모듈 파라미터, 명령·로그·측정 자료를 함께 남깁니다.
-
-## 9. 문제 해결
-
-| 증상 | 확인·조치 |
-|---|---|
-| Invalid module format | uname -r, 헤더 build 경로, modinfo의 vermagic 확인 후 재빌드 |
-| 모듈은 있지만 /dev 없음 | DT 노드·compatible·status, 바인딩, probe 오류 확인. mknod로 해결하지 않음 |
-| DTBO 복사 후 노드 없음 | 실제 boot LABEL, OVERLAYS, base DTB, 보드 compatible, 심볼 확인 |
-| motor PWM 획득 실패 / probe defer | pwm5 provider·status, pwms, pwm-names, dmesg 확인 |
-| PWM 상태는 정상인데 파형 없음 | 33번 pinmux·패드 확인. debugfs 값만으로 외부 파형 보장 불가 |
-| GPIO 쓰는데 LED 안 켜짐 | tristate/open-drain, GPIO 기능, 극성·저항·접지 확인 |
-| GPIO busy | 모듈·SPI/I2S·선택적 모드 LED의 점유 확인 |
-| EC11 방향 반대 | 반전단·DT 극성 확인 후 앱 -r 또는 드라이버 reverse를 하나씩 보정 |
-| 회전 튐 / 누락 | 접점·디텐트 초기 상태·steps_per_detent·FIFO full 확인 |
-| 길게 누르기가 3초 | 로드 파라미터와 modprobe 설정 확인, 기존 3000 override 제거 |
-| BMP180 read failed | IIO 번호, I2C 바인딩, 전원·주소·보정 오류 확인. AUTO는 0% |
-| 센서 오류인데 LED 값 유지 | TEMP가 마지막 정상값을 유지하는 현재 구현. 오류 표시는 미구현 |
-| 권한 오류 | 진단 시 sudo, 배포 시 장치별 udev/그룹 권한 설정 |
-| fan_ctrl duty 변화에도 모터 정지 | 모터 콜백 TODO. 실제 출력은 fan_app/apptest로 검증 |
-| 입력 이벤트 불규칙 | 다른 EC11 소비 앱 종료. 공유 FIFO 및 open 초기화 확인 |
-
-```bash
-gpiodetect
-gpioinfo
-sudo cat /sys/kernel/debug/pinctrl/2430000.pinmux/pinconf-groups | \
-    grep -A4 -E 'soc_gpio41_ph7|spi3_sck_py0'
-sudo dmesg | tail -n 100
-```
-
-debugfs·pinctrl 경로는 실제 커널에서 확인합니다. 기존 LED 문서의 출력 정상 조건은 tristate=0입니다.
-
-## 10. 개발 과제와 남은 작업
-
-| 과제 | 현재 접근 / 남은 작업 |
-|---|---|
-| 하드웨어 자원 분리 | DT descriptor·PWM consumer API 사용. base DT·pinmux 통합 시험 필요 |
-| 센서 보정 | 계수 signed/unsigned 분리, 64비트 계산·범위 검사. 실제 기준계 비교 필요 |
-| 접점 바운스 | quadrature 누적·디텐트·debounce·long-press 분리. 빠른 회전·장시간 시험 필요 |
-| 경계 온도 흔들림 | 모터 22/20°C, LED ±0.2°C 히스테리시스 |
-| 모터 정지 | 0%·close·remove 경로 구현. 최종 DT 파형·비정상 종료 시험 필요 |
-| 출력 패드 | Jetson-IO 대체 경로·LED full pinctrl. DT 미적용 원인 확정 필요 |
-| 문서 불일치 | 현재 2초 기준. 기존 EC11/Testbench의 3초 안내 수정은 별도 작업 |
-| 앱 개선 | IIO 자동 탐색, 센서 오류 LED 표시, LED ioctl 오류 전달, 오류 종료 코드 |
-| 시험 구분 | fan_ctrl TODO와 fan_app 실제 출력 구분. 네 장치 DT 동시 동작 로그 필요 |
-| 저장소 관리 | .ko/.o/.cmd·실행 파일·backup 포함. 산출물 관리 방침 정비 가능 |
-
-이 README 작성에서는 드라이버·DT·기존 상세 README를 변경하지 않았습니다. 남은 항목은 후속 작업이며 완료 사실이 아닙니다.
-
-## 11. 저장소 구조
-
-기준 커밋의 주요 소스 구조입니다. 반복되는 빌드 산출물·실행 바이너리는 축약했습니다.
-
-```text
-linux_driver_project/
-├── README.md
-├── Application/
-│   ├── Makefile
-│   ├── fan_app.c
-│   ├── fan_app.h
-│   └── fan_globals.h
-├── Testbench/
-│   ├── Makefile
-│   ├── README.md
-│   ├── README_legacy.md
-│   ├── ec11_test.c
-│   ├── ledbar_test.c
-│   ├── fan_ctrl.c
-│   ├── fan_state.c
-│   ├── fan_state.h
-│   └── fan_led_sim.c
-└── drivers/
-    ├── bmp180/
-    │   ├── Makefile
-    │   ├── bmp180.c
-    │   ├── bmp180.h
-    │   ├── bmp180-overlay.dts
-    │   ├── current-jetson.dts
-    │   └── *.bak / 빌드 산출물
-    ├── dc_motor/
-    │   ├── Makefile
-    │   ├── motor.c
-    │   ├── motor.h
-    │   ├── motor_ioctl.h
-    │   ├── motor-overlay.dts
-    │   ├── apptest.c
-    │   └── *.pre_dt / 빌드 산출물
-    ├── ec11/
-    │   ├── Makefile
-    │   ├── README.md
-    │   ├── ec11.c
-    │   ├── ec11_ioctl.h
-    │   ├── ec11-overlay.dts
-    │   └── dt.txt
-    ├── ledbar/
-    │   ├── Makefile
-    │   ├── README.md
-    │   ├── ledbar.c
-    │   ├── ledbar_ioctl.h
-    │   ├── ledbar_ctrl.c
-    │   ├── ledbar_ctrl.h
-    │   ├── ledbar-overlay.dts
-    │   └── ledbar-simple-overlay.dts
-    └── merge_ec11_led/
-        └── 이전 통합 빌드 산출물
-```
-
-앱은 Application/Makefile, 시험 앱은 Testbench/Makefile, 커널 모듈은 각 드라이버 Makefile로 빌드합니다. merge_ec11_led 산출물은 현재 소스의 대체 빌드 경로가 아닙니다.
-
-## 12. 상세 문서와 근거
-
-### 드라이버 README 및 시험 문서
-
-- [EC11 README](https://github.com/Kyuhyeon34/linux_driver_project/blob/dev/kjh/drivers/ec11/README.md) — **3초 안내는 현재 2초 기준과 다름.**
-- [LED 바 README](https://github.com/Kyuhyeon34/linux_driver_project/blob/dev/kjh/drivers/ledbar/README.md) — 배선·nodt 동작·DT 실패 기록.
-- [Testbench README](https://github.com/Kyuhyeon34/linux_driver_project/blob/dev/kjh/Testbench/README.md) — 시험 앱 역할, 큐 충돌. **3000ms 예시는 현재 2000ms 적용.**
-- [이전 통합 문서](https://github.com/Kyuhyeon34/linux_driver_project/blob/dev/kjh/Testbench/README_legacy.md) — 과거 구조·모드 LED.
-
-기준 커밋에는 **BMP180과 DC 모터 폴더의 별도 README.md가 없습니다.** 존재하지 않는 README 링크 대신 실제 소스와 DT를 제공합니다.
-
-### 기준 커밋으로 고정한 구현 근거
-
-- [통합 앱](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/Application/fan_app.c) · [정책 상수](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/Application/fan_app.h) · [앱 빌드](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/Application/Makefile)
-- [BMP180 소스](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/bmp180/bmp180.c) · [헤더](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/bmp180/bmp180.h) · [DT](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/bmp180/bmp180-overlay.dts)
-- [모터 소스](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/dc_motor/motor.c) · [ABI](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/dc_motor/motor_ioctl.h) · [DT](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/dc_motor/motor-overlay.dts) · [시험 앱](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/dc_motor/apptest.c)
-- [EC11 소스](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ec11/ec11.c) · [ABI](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ec11/ec11_ioctl.h) · [DT](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ec11/ec11-overlay.dts)
-- [LED 소스](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/ledbar.c) · [표시 정책](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/ledbar_ctrl.c) · [ABI](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/ledbar_ioctl.h) · [full DT](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/ledbar-overlay.dts) · [simple DT](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/ledbar-simple-overlay.dts)
-- [시험 코드 제한](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/Testbench/README.md) · [기존 LED 결과](https://github.com/Kyuhyeon34/linux_driver_project/blob/24e1113cd51640bfdc38e9ee8ac909a5dd2d5dc3/drivers/ledbar/README.md)
-
-동작 설명은 기준 커밋의 활성 코드 경로를 따릅니다. #if 0의 과거 코드와 오래된 주석을 현재 구현으로 취급하지 않았습니다.
+`*.mod.c`는 커널 모듈 빌드 과정의 생성 파일입니다. [`drivers/merge_ec11_led/`](drivers/merge_ec11_led/)에는 이전 통합 빌드의 생성 파일이 있습니다. 현재 모듈은 [각 드라이버 디렉터리](drivers/)의 소스와 Makefile로 빌드합니다.
