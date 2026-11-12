@@ -16,3 +16,6 @@
 !.gitignore
 # README 허용
 !README.md
+
+# 문서 · 사진 · 시연 영상 허용
+!docs/**
