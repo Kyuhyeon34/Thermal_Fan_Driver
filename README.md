@@ -27,14 +27,11 @@ Jetson Orin Nano에서 온도 센서, 모터, 엔코더, LED 바를 모두 **리
 ## 시연 영상
 
 
-https://github.com/user-attachments/assets/e559106e-2e17-45d3-81c9-7cc68af98763
-
-
 WAIT에서 시작 → 클릭으로 MANUAL(노브로 풍량 조절) → 클릭으로 AUTO(센서를 손으로 데우면 풍량 · LED 증가) → 2초 길게 눌러 WAIT
 
 <table>
   <tr><th>통합 동작 시연</th></tr>
-  <tr><td><a href="docs/videos/demo.mp4"><img src="docs/images/poster-demo.png" width="100%"></a></td></tr>
+  <tr><td><video src="https://github.com/user-attachments/assets/e559106e-2e17-45d3-81c9-7cc68af98763" width="100%" controls muted></video></td></tr>
 </table>
 
 ## 하드웨어 구성
