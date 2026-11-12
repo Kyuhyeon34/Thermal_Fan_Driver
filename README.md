@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/3c284633-f92e-4445-9615-6d58908be9bb
+
 # Smart Fan — 커널 드라이버 기반 온도 감시 · 냉각 제어
 
 > 대한상공회의소 서울기술교육센터 AI 시스템반도체 SW개발자 과정 · Linux 디바이스 드라이버 팀 프로젝트
@@ -21,6 +25,10 @@ Jetson Orin Nano에서 온도 센서, 모터, 엔코더, LED 바를 모두 **리
 📑 [발표자료 (PDF)](docs/presentation/Smart_Fan_Linux_Driver_발표자료.pdf)
 
 ## 시연 영상
+
+
+https://github.com/user-attachments/assets/e559106e-2e17-45d3-81c9-7cc68af98763
+
 
 WAIT에서 시작 → 클릭으로 MANUAL(노브로 풍량 조절) → 클릭으로 AUTO(센서를 손으로 데우면 풍량 · LED 증가) → 2초 길게 눌러 WAIT
 
